@@ -59,6 +59,13 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
     metric_types = ['dp', 'eo', 'ece_gap']
     metric_labels = ['Demographic Parity Difference', 'Equalized Odds Difference', 'ECE Gap']
     
+    # Calculate vmax for each metric (across all shifts) for consistent scaling
+    vmax_per_metric = {}
+    for metric in metric_types:
+        vmax_per_metric[metric] = max(
+            max(results[shift][metric]) for shift in shift_types
+        )
+    
     # Create a figure with 3 rows (shift types) x 3 columns (metrics)
     fig, axes = plt.subplots(3, 3, figsize=(16, 12))
     fig.suptitle('Phase Diagrams: Fairness Metrics Under Distribution Shifts', 
@@ -76,7 +83,7 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
             metric_data = results[shift_type][metric_type]
             metric_array = np.array(metric_data).reshape(1, -1)
             
-            # Create heatmap
+            # Create heatmap with metric-specific vmax for consistent scaling across shifts
             sns.heatmap(
                 metric_array,
                 ax=ax,
@@ -85,9 +92,8 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
                 xticklabels=[f'{s:.2f}' for s in severities],
                 yticklabels=[shift_label],
                 vmin=0,
-                vmax=1,  # Normalize to [0, 1] range
-                annot=True,
-                fmt='.3f',
+                vmax=vmax_per_metric[metric_type],  # Global max per metric for fair comparison
+                annot=False, 
                 cbar_kws={'label': metric_label}
             )
             
@@ -132,6 +138,13 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
     metric_types = ['dp', 'eo', 'ece_gap']
     metric_labels = ['Demographic Parity\nDifference', 'Equalized Odds\nDifference', 'ECE Gap']
     
+    # Calculate vmax for each metric (across all shifts) for consistent scaling
+    vmax_per_metric = {}
+    for metric in metric_types:
+        vmax_per_metric[metric] = max(
+            max(results[shift][metric]) for shift in shift_types
+        )
+    
     # Create separate figure for each shift type
     for shift_type, shift_label, severities in zip(shift_types, shift_labels, severity_arrays):
         fig, axes = plt.subplots(1, 3, figsize=(14, 3))
@@ -144,7 +157,7 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
             # Get metric data
             metric_data = np.array(results[shift_type][metric_type]).reshape(1, -1)
             
-            # Create heatmap
+            # Create heatmap with metric-specific vmax for consistent scaling
             sns.heatmap(
                 metric_data,
                 ax=ax,
@@ -153,9 +166,8 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
                 xticklabels=[f'{s:.2f}' for s in severities],
                 yticklabels=[shift_label],
                 vmin=0,
-                vmax=1,
-                annot=True,
-                fmt='.3f',
+                vmax=vmax_per_metric[metric_type],  # Global max per metric for fair comparison
+                annot=False,  # Clean visualization without clutter
                 cbar_kws={'label': 'Metric Value'}
             )
             
