@@ -1,9 +1,14 @@
 import numpy as np
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import argparse
 from datetime import datetime
 from sklearn.linear_model import LogisticRegression
+
+
 
 from src.utils import load_config
 from src.data_generator import generate_data
