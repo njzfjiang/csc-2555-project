@@ -19,21 +19,64 @@ sweep over different types and magnitudes of distribution shift.
 
 ## 2. Method
 
-### 2.1 Synthetic data construction
+### 2.1 Distribution shift mechanisms
 
-We construct a family of synthetic binary classification problems with a binary sensitive attribute
-\(A \in \{0, 1\}\), features \(X\), and label \(Y \in \{0, 1\}\). The data-generating process is
-implemented in `src/data_generator.py` and parameterized by:
+We consider three families of controlled distribution shift, each implemented as a wrapper around
+the base data generator `generate_data` (`src/shifts.py`). In all cases, the underlying classifier
+\(h\) is held fixed; only the test-time data distribution changes.
 
-- group proportions \(P(A=1)\),
-- class-conditional feature distributions \(P(X \mid A, Y)\),
-- label noise rates that may differ across groups.
+#### 2.1.1 Group-conditioned base rate (label) shift
 
-This setup allows us to introduce controlled shifts in:
+The function `group_shift(severity)` varies the group-conditioned base rates of the positive class
+while keeping the feature generator otherwise fixed. Concretely, we define
 
-- **Group mix shift:** changing \(P(A=1)\) while keeping within-group conditionals fixed.
-- **Feature shift:** shifting the means or variances of \(P(X \mid A, Y)\) for one or both groups.
-- **Label noise shift:** varying group-specific label noise rates.
+- \( \Pr(Y=1 \mid A=\text{A}) = 0.3 + 0.2 \cdot \mathrm{severity} \),
+- \( \Pr(Y=1 \mid A=\text{B}) = 0.3 - 0.2 \cdot \mathrm{severity} \),
+
+with \(\mathrm{severity} \in [0,1]\). Increasing the severity therefore simultaneously increases the
+positive rate for group A and decreases it for group B. The function `group_shift` passes the
+corresponding base rates to `generate_data` and returns the resulting features \(X\), labels \(Y\),
+and group labels \(A\).
+
+This family of shifts induces **asymmetric changes in label prevalence across groups** without
+explicitly perturbing the feature distributions.
+
+#### 2.1.2 Group-specific covariate shift
+
+The function `covariate_shift(severity, group)` implements a **covariate shift** that affects the
+scale of a particular feature dimension for one group only. We treat `severity` as a multiplicative
+scale factor applied to the covariance (or variance) of that feature for the chosen group, with
+\(\mathrm{severity} \in [1, 4]\). Formally,
+
+- if `group='A'`, we set `cov_scale_a = severity`, `cov_scale_b = 1.0`;
+- if `group='B'`, we set `cov_scale_a = 1.0`, `cov_scale_b = severity`.
+
+These parameters are passed to `generate_data`, which scales the feature covariance accordingly. The
+labels and group labels themselves are left unchanged.
+
+This family of shifts isolates the effect of **within-group feature distribution changes** on
+fairness metrics, without directly altering label noise or group proportions.
+
+#### 2.1.3 Group-specific label noise shift
+
+Finally, the function `label_shift(severity)` modifies the **label noise** asymmetrically across
+groups. Here, `severity` (chosen in \([0, 0.3]\)) controls the probability with which positive labels
+for group A are flipped. Concretely, we call
+
+- `generate_data(flip_noise_a=severity)`,
+
+which flips a fraction of positive labels in group A while leaving group B and the feature
+distribution untouched. The result is a distribution with **higher effective noise** in one group,
+even though the marginal \(X\) distribution is unchanged.
+
+Together, these three mechanisms allow us to separately study:
+
+- changes in group-specific base rates,
+- changes in group-specific feature distributions,
+- changes in group-specific label noise,
+
+and to observe how standard fairness and calibration metrics respond when each dimension is varied
+in isolation.
 
 ### 2.2 Fairness and calibration metrics
 

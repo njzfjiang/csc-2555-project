@@ -1,9 +1,11 @@
 import numpy as np
 import os
 import json
+import argparse
 from datetime import datetime
 from sklearn.linear_model import LogisticRegression
 
+from src.utils import load_config
 from src.data_generator import generate_data
 from src.shifts import group_shift, covariate_shift, label_shift
 from src.metrics import (
@@ -58,30 +60,47 @@ def evaluate_shift(X, y, s, y_pred, y_proba):
     }
 
 
-def generate_phase_diagram_data(alphas=None, gammas=None, betas=None, seed=42):
+def generate_phase_diagram_data(config,seed=42):
     """
     Generate data for phase diagrams across three shift types.
     
     Parameters:
     -----------
-    alphas : array-like, optional
-        Group shift severity levels. Default: np.linspace(0.0, 0.5, 8)
-    gammas : array-like, optional
-        Covariate shift severity levels. Default: np.linspace(1.0, 4.0, 8)
-    betas : array-like, optional
-        Label shift severity levels. Default: np.linspace(0.0, 0.3, 8)
+    config : dict
+        Experiment configuration dictionary
+    seed : int, optional
+        Random seed for reproducibility
     
     Returns:
     --------
     dict, array, array, array
         Phase diagram matrices for each metric/shift type, and severity arrays
     """
-    if alphas is None:
-        alphas = np.linspace(0.0, 0.5, 8)
-    if gammas is None:
-        gammas = np.linspace(1.0, 4.0, 8)
-    if betas is None:
-        betas = np.linspace(0.0, 0.3, 8)
+
+    group_cfg = config['shifts']['group_shift']
+    cov_cfg = config['shifts']['covariate_shift']
+    label_cfg = config['shifts']['label_shift']
+    
+    alphas = np.linspace(group_cfg['severity_min'], group_cfg['severity_max'], 
+                         int(group_cfg['num_steps']))
+    gammas = np.linspace(cov_cfg['severity_min'], cov_cfg['severity_max'], 
+                         int(cov_cfg['num_steps']))
+    betas = np.linspace(label_cfg['severity_min'], label_cfg['severity_max'], 
+                        int(label_cfg['num_steps']))
+    
+    data_cfg = config['data']
+    
+    # Base data for training (unshifted)
+    X_train, y_train, s_train = generate_data(
+        num_samples=data_cfg['num_samples'],
+        prior_a=data_cfg['prior_a'],
+        base_rate_a=data_cfg['base_rate_a'],
+        base_rate_b=data_cfg['base_rate_b'],
+        seed=seed
+    )
+    
+    target_group = cov_cfg.get('target_group', 'A')
+    print(f"Generating phase diagram data with target group for covariate shift: {target_group}")
     
     # Initialize results matrices
     results = {
@@ -90,15 +109,13 @@ def generate_phase_diagram_data(alphas=None, gammas=None, betas=None, seed=42):
         'label_shift': {'dp': [], 'eo': [], 'ece_gap': []}
     }
     
-    X_train, y_train, s_train = generate_data(seed=seed)  # Base data for training
-
     print("Generating phase diagram data...")
     
     # Group Shift
     print("  Group shift...", end='', flush=True)
     for severity in alphas:
-        X_test, y_test, s_test = group_shift(severity=severity)
-        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=42)
+        X_test, y_test, s_test = group_shift(severity=severity, seed=seed)
+        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=seed)
         metrics = evaluate_shift(X_test, y_test, s_test, y_pred, y_proba)
         for metric in ['dp', 'eo', 'ece_gap']:
             results['group_shift'][metric].append(metrics[metric])
@@ -107,8 +124,8 @@ def generate_phase_diagram_data(alphas=None, gammas=None, betas=None, seed=42):
     # Covariate Shift
     print("  Covariate shift...", end='', flush=True)
     for severity in gammas:
-        X_test, y_test, s_test = covariate_shift(severity=severity, group='A')
-        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=42)
+        X_test, y_test, s_test = covariate_shift(severity=severity, group=target_group, seed=seed)
+        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=seed)
         metrics = evaluate_shift(X_test, y_test, s_test, y_pred, y_proba)
         for metric in ['dp', 'eo', 'ece_gap']:
             results['covariate_shift'][metric].append(metrics[metric])
@@ -117,8 +134,8 @@ def generate_phase_diagram_data(alphas=None, gammas=None, betas=None, seed=42):
     # Label Shift
     print("  Label shift...", end='', flush=True)
     for severity in betas:
-        X_test, y_test, s_test = label_shift(severity=severity)
-        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=42)
+        X_test, y_test, s_test = label_shift(severity=severity, seed=seed)
+        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=seed)
         metrics = evaluate_shift(X_test, y_test, s_test, y_pred, y_proba)
         for metric in ['dp', 'eo', 'ece_gap']:
             results['label_shift'][metric].append(metrics[metric])
@@ -169,7 +186,7 @@ def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
     return log_file
 
 
-def run_sweep(seed=42):
+def run_sweep(config, seed=42):
     """
     Run experimental sweep across shift types and compute fairness metrics.
     
@@ -181,7 +198,7 @@ def run_sweep(seed=42):
     print("="*60 + "\n")
     
     # Generate phase diagram data
-    results, alphas, gammas, betas = generate_phase_diagram_data(seed=seed)
+    results, alphas, gammas, betas = generate_phase_diagram_data(config, seed=seed)
     
     print("\n" + "="*60)
     print("RESULTS SUMMARY")
@@ -216,4 +233,11 @@ def run_sweep(seed=42):
 
 
 if __name__ == '__main__':
-    run_sweep()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default='configs/experiment_config.yaml',
+                        help='Path to experiment config file')
+    args = parser.parse_args()
+    
+    config = load_config(args.config)
+    seed = config.get('experiment', {}).get('seed', 42)
+    run_sweep(config, seed=seed) 

@@ -1,0 +1,55 @@
+# ============================================
+# Fairness Shift Simulation - Experiment Config
+# ============================================
+
+# --- Experiment Metadata ---
+experiment:
+  name: "fairness_shift_phase_diagram"
+  seed: 42
+  description: "Sweep group prior, covariate, and label shifts to map DP/EO divergence."
+
+# --- Data Generation Parameters ---
+data:
+  num_samples: 5000          
+  num_features: 2            
+  prior_a: 0.5               # P(A)=0.5
+  base_rate_a: 0.3           # P(Y=1|A)
+  base_rate_b: 0.3           # P(Y=1|B)
+
+# --- Shift Parameters (Sweep Ranges) ---
+shifts:
+  # 1. Group Prior Shift (α)
+  group_shift:
+    severity_min: 0.0
+    severity_max: 1.0
+    num_steps: 11            
+    delta: 0.2               
+    # base_rate_a = 0.3 + α*0.2, base_rate_b = 0.3 - α*0.2
+
+  # 2. Covariate Shift (γ)
+  covariate_shift:
+    severity_min: 1.0
+    severity_max: 4.0
+    num_steps: 10            
+    target_group: "A"        
+
+  # 3. Asymmetric Label Noise (β)
+  label_shift:
+    severity_min: 0.0
+    severity_max: 0.3
+    num_steps: 10            
+
+# --- Model Parameters ---
+model:
+  solver: "lbfgs"            
+  max_iter: 1000             
+  random_state: 42
+
+# --- Metrics Parameters ---
+metrics:
+  ece_bins: 10               # ECE（Expected Calibration Error）bins
+
+# --- Output Paths ---
+output:
+  log_dir: "outputs/logs"
+  figure_dir: "outputs/figures"

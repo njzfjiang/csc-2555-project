@@ -3,11 +3,33 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import sys
+from glob import glob
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from run_sweep import generate_phase_diagram_data
+from src.utils import load_sweep_results
+
+
+def find_latest_log(log_dir='outputs/logs'):
+    """
+    Find the most recent log file in the logs directory.
+    
+    Parameters:
+    -----------
+    log_dir : str, optional
+        Directory containing log files. Default: 'outputs/logs'
+    
+    Returns:
+    --------
+    str or None
+        Path to the most recent log file, or None if no logs found
+    """
+    log_files = glob(os.path.join(log_dir, 'sweep_results_*.json'))
+    if not log_files:
+        return None
+    # Sort by modification time and return the most recent
+    return max(log_files, key=os.path.getmtime)
 
 
 def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
@@ -152,14 +174,42 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
         plt.close()
 
 
-def main():
-    """Main function to generate and plot phase diagrams."""
+def main(log_file=None):
+    """
+    Main function to plot phase diagrams from cached log results.
+    
+    Parameters:
+    -----------
+    log_file : str, optional
+        Path to the log file to load. If None, uses the most recent log.
+        If no log found, raises error.
+    """
     print("\n" + "="*60)
-    print("PHASE DIAGRAM VISUALIZATION")
+    print("PHASE DIAGRAM VISUALIZATION (FROM CACHED LOGS)")
     print("="*60)
     
-    # Generate phase diagram data
-    results, alphas, gammas, betas = generate_phase_diagram_data()
+    # Find or use specified log file
+    if log_file is None:
+        log_file = find_latest_log(log_dir='outputs/logs')
+        if log_file is None:
+            print("\n❌ ERROR: No log files found in outputs/logs/")
+            print("   Please run: python experiments/run_sweep.py")
+            print("   to generate results first.\n")
+            return
+        print(f"\n✓ Using latest log: {log_file}")
+    else:
+        if not os.path.exists(log_file):
+            print(f"\n❌ ERROR: Log file not found: {log_file}\n")
+            return
+        print(f"\n✓ Using log: {log_file}")
+    
+    # Load results from log
+    print("Loading results from cache...")
+    try:
+        results, alphas, gammas, betas = load_sweep_results(log_file)
+    except Exception as e:
+        print(f"\n❌ ERROR: Could not load log file: {e}\n")
+        return
     
     # Create figures directory if it doesn't exist
     fig_dir = 'outputs/figures'
@@ -174,7 +224,7 @@ def main():
     plot_separate_heatmaps(results, alphas, gammas, betas, save_dir=fig_dir)
     
     print("\n" + "="*60)
-    print("Phase diagram generation complete!")
+    print("Phase diagram visualization complete!")
     print("="*60 + "\n")
 
 
