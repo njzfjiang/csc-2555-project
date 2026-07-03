@@ -13,15 +13,25 @@ from src.utils import load_config
 from src.data_generator import generate_data
 from src.shifts import group_shift, covariate_shift, label_shift
 from src.reweighting import compute_importance_weights_kde, effective_sample_size
+from src.adjust_threshold import (
+    adjust_threshold_equal_opportunity,
+    apply_group_thresholds,
+)
 from src.metrics import (
-    demographic_parity_difference, 
-    equalized_odds_difference, 
+    demographic_parity_difference,
+    equalized_odds_difference,
+    true_positive_rate_difference,
     calculate_group_ece_metrics
 )
 
 
-METRIC_KEYS = ("dp", "eo", "ece_gap", "balanced_accuracy")
-METHOD_KEYS = ("baseline", "kde_reweighting")
+METRIC_KEYS = ("dp", "eo", "tpr_gap", "ece_gap", "balanced_accuracy")
+METHOD_KEYS = (
+    "baseline",
+    "kde_reweighting",
+    "threshold_tpr",
+    "target_retrained",
+)
 
 
 def train_classifier(X_train, y_train, X_test, seed=42, sample_weight=None,
@@ -66,11 +76,13 @@ def evaluate_shift(X, y, s, y_pred, y_proba, ece_bins=10):
     """
     dp_diff = demographic_parity_difference(y, y_pred, s)
     eo_diff = equalized_odds_difference(y, y_pred, s)
+    tpr_gap = true_positive_rate_difference(y, y_pred, s)
     _, ece_gap = calculate_group_ece_metrics(y_proba, y, s, bins=ece_bins)
     
     return {
         'dp': np.abs(dp_diff),  # Use absolute value for visualization
         'eo': np.abs(eo_diff),
+        'tpr_gap': np.abs(tpr_gap),
         'ece_gap': ece_gap,
         'balanced_accuracy': balanced_accuracy_score(y, y_pred),
     }
@@ -86,6 +98,7 @@ def _empty_shift_results():
             'ess_fraction': [],
             'weight_min': [],
             'weight_max': [],
+            'thresholds': [],
         }
     }
 
@@ -137,6 +150,8 @@ def _evaluate_severity(
     data_config,
     model_config,
     reweighting_config,
+    threshold_config,
+    supplementary_config,
     X_train,
     y_train,
     seed,
@@ -192,15 +207,81 @@ def _evaluate_severity(
         ece_bins=ece_bins,
     )
 
+    # Fit post-processing thresholds on an independent labeled calibration set;
+    # the evaluation labels above are never used for threshold selection.
+    calibration_seed = seed + threshold_config.get('calibration_seed_offset', 30000)
+    X_cal, y_cal, s_cal = _generate_shift(
+        shift_type,
+        severity,
+        data_config,
+        shift_config,
+        calibration_seed,
+        threshold_config.get('calibration_num_samples', 1000),
+    )
+    _, calibration_proba = train_classifier(
+        X_train, y_train, X_cal, seed=seed, model_config=model_config
+    )
+    thresholds = adjust_threshold_equal_opportunity(
+        y_cal,
+        calibration_proba,
+        s_cal,
+        grid_resolution=threshold_config.get('grid_resolution', 0.01),
+    )
+    threshold_pred = apply_group_thresholds(y_proba, s_test, thresholds)
+    threshold_metrics = evaluate_shift(
+        X_test,
+        y_test,
+        s_test,
+        threshold_pred,
+        y_proba,
+        ece_bins=ece_bins,
+    )
+
+    # Supplementary target-retraining oracle: train and evaluate on independent
+    # samples from the same shifted distribution.
+    target_train_seed = seed + supplementary_config.get('train_seed_offset', 20000)
+    X_target_train, y_target_train, _ = _generate_shift(
+        shift_type,
+        severity,
+        data_config,
+        shift_config,
+        target_train_seed,
+        supplementary_config.get('train_num_samples', data_config['num_samples']),
+    )
+    target_pred, target_proba = train_classifier(
+        X_target_train,
+        y_target_train,
+        X_test,
+        seed=seed,
+        model_config=model_config,
+    )
+    target_retrained = evaluate_shift(
+        X_test,
+        y_test,
+        s_test,
+        target_pred,
+        target_proba,
+        ece_bins=ece_bins,
+    )
+
     for metric in METRIC_KEYS:
         results[shift_type]['baseline'][metric].append(baseline[metric])
         results[shift_type]['kde_reweighting'][metric].append(reweighted[metric])
+        results[shift_type]['threshold_tpr'][metric].append(
+            threshold_metrics[metric]
+        )
+        results[shift_type]['target_retrained'][metric].append(
+            target_retrained[metric]
+        )
     ess = effective_sample_size(weights)
     diagnostics = results[shift_type]['diagnostics']
     diagnostics['ess'].append(ess)
     diagnostics['ess_fraction'].append(ess / len(weights))
     diagnostics['weight_min'].append(float(weights.min()))
     diagnostics['weight_max'].append(float(weights.max()))
+    diagnostics['thresholds'].append(
+        {str(group): float(value) for group, value in thresholds.items()}
+    )
 
 
 def generate_phase_diagram_data(config, seed=42):
@@ -253,6 +334,8 @@ def generate_phase_diagram_data(config, seed=42):
     }
     model_cfg = config.get('model', {})
     reweighting_cfg = config.get('reweighting', {})
+    threshold_cfg = config.get('threshold_adjustment', {})
+    supplementary_cfg = config.get('supplementary', {})
     ece_bins = config.get('metrics', {}).get('ece_bins', 10)
     
     print("Generating phase diagram data...")
@@ -262,7 +345,8 @@ def generate_phase_diagram_data(config, seed=42):
     for severity in alphas:
         _evaluate_severity(
             results, 'group_shift', severity, group_cfg, data_cfg, model_cfg,
-            reweighting_cfg, X_train, y_train, seed, ece_bins
+            reweighting_cfg, threshold_cfg, supplementary_cfg,
+            X_train, y_train, seed, ece_bins
         )
     print(" done")
     
@@ -271,7 +355,8 @@ def generate_phase_diagram_data(config, seed=42):
     for severity in gammas:
         _evaluate_severity(
             results, 'covariate_shift', severity, cov_cfg, data_cfg, model_cfg,
-            reweighting_cfg, X_train, y_train, seed, ece_bins
+            reweighting_cfg, threshold_cfg, supplementary_cfg,
+            X_train, y_train, seed, ece_bins
         )
     print(" done")
     
@@ -280,7 +365,8 @@ def generate_phase_diagram_data(config, seed=42):
     for severity in betas:
         _evaluate_severity(
             results, 'label_shift', severity, label_cfg, data_cfg, model_cfg,
-            reweighting_cfg, X_train, y_train, seed, ece_bins
+            reweighting_cfg, threshold_cfg, supplementary_cfg,
+            X_train, y_train, seed, ece_bins
         )
     print(" done")
     
@@ -318,7 +404,7 @@ def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
     
     # Prepare data for JSON serialization
     output_data = {
-        'schema_version': 2,
+        'schema_version': 3,
         'timestamp': timestamp,
         'alphas': alphas.tolist() if isinstance(alphas, np.ndarray) else list(alphas),
         'gammas': gammas.tolist() if isinstance(gammas, np.ndarray) else list(gammas),
@@ -357,9 +443,11 @@ def run_sweep(config, seed=42):
         for method in METHOD_KEYS:
             dp = results[shift_type][method]['dp']
             eo = results[shift_type][method]['eo']
+            tpr_gap = results[shift_type][method]['tpr_gap']
             print(
                 f"  {method}: DP [{min(dp):.4f}, {max(dp):.4f}], "
-                f"EO [{min(eo):.4f}, {max(eo):.4f}]"
+                f"EO [{min(eo):.4f}, {max(eo):.4f}], "
+                f"TPR gap [{min(tpr_gap):.4f}, {max(tpr_gap):.4f}]"
             )
         ess = results[shift_type]['diagnostics']['ess_fraction']
         print(f"  ESS fraction: [{min(ess):.3f}, {max(ess):.3f}]\n")

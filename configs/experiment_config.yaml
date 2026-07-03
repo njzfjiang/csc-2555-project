@@ -58,6 +58,17 @@ reweighting:
   adaptation_seed_offset: 10000
   max_fit_samples: 1000
 
+# --- Group-Specific TPR Threshold Adjustment ---
+threshold_adjustment:
+  calibration_num_samples: 1000
+  calibration_seed_offset: 30000
+  grid_resolution: 0.01
+
+# --- Supplementary Target-Distribution Retraining ---
+supplementary:
+  train_num_samples: 5000
+  train_seed_offset: 20000
+
 # --- Output Paths ---
 output:
   log_dir: "outputs/logs"

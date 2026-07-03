@@ -27,13 +27,14 @@ the behavior of standard group fairness metrics, even when the underlying classi
   - `data_generator.py`: synthetic dataset construction under different group/feature/label shifts.
   - `shifts.py`: definitions of shift types and utilities for applying them.
   - `reweighting.py`: KDE density-ratio importance weighting utilities.
+  - `adjust_threshold.py`: group-specific threshold post-processing utilities.
   - `metrics.py`: implementations of group fairness metrics (e.g., demographic parity, equalized odds).
   - `utils.py`: shared helper functions.
 - `configs/`
   - `experiment_config.yaml`: main configuration for sweep ranges, metrics, and other hyperparameters.
 - `experiments/`
-  - `run_sweep.py`: evaluates baseline and KDE-reweighted models across the shift grid.
-  - `plot_phase_diagrams.py`: generates phase diagrams and baseline/reweighting comparison plots.
+  - `run_sweep.py`: evaluates baseline, KDE reweighting, TPR threshold adjustment, and target retraining.
+  - `plot_phase_diagrams.py`: generates phase diagrams, mitigation comparisons, and supplementary plots.
 - `notebooks/`
   - `figures.ipynb`: notebook for interactive figure tweaking and additional exploratory plots.
 - `data/`

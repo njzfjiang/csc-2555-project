@@ -207,11 +207,15 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
         plt.close()
 
 
-def plot_reweighting_comparison(results, alphas, gammas, betas,
-                                save_dir='outputs'):
-    """Plot baseline versus KDE-reweighted DP/EO and their signed deltas."""
-    if _metrics_for_method(results['group_shift'], 'kde_reweighting') is None:
-        print('Skipping reweighting comparison: selected log uses schema v1.')
+def plot_mitigation_comparison(results, alphas, gammas, betas,
+                               save_dir='outputs'):
+    """Compare baseline, KDE reweighting, and TPR threshold adjustment."""
+    required = ('kde_reweighting', 'threshold_tpr')
+    if any(
+        _metrics_for_method(results['group_shift'], method) is None
+        for method in required
+    ):
+        print('Skipping mitigation comparison: methods are absent from log.')
         return
 
     os.makedirs(save_dir, exist_ok=True)
@@ -220,54 +224,116 @@ def plot_reweighting_comparison(results, alphas, gammas, betas,
         ('covariate_shift', 'Covariate Shift', gammas),
         ('label_shift', 'Asymmetric Label Noise', betas),
     ]
-    metrics = [('dp', 'DP Difference'), ('eo', 'EO Difference')]
+    metrics = [
+        ('dp', 'DP Difference'),
+        ('eo', 'EO Difference'),
+        ('tpr_gap', 'TPR Gap'),
+    ]
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
+    fig, axes = plt.subplots(3, 3, figsize=(17, 12))
     for row, (shift_type, shift_label, severities) in enumerate(shifts):
-        baseline = _metrics_for_method(results[shift_type], 'baseline')
-        reweighted = _metrics_for_method(results[shift_type], 'kde_reweighting')
+        methods = {
+            'Baseline': _metrics_for_method(results[shift_type], 'baseline'),
+            'KDE reweighting': _metrics_for_method(
+                results[shift_type], 'kde_reweighting'
+            ),
+            'TPR threshold': _metrics_for_method(
+                results[shift_type], 'threshold_tpr'
+            ),
+        }
         for col, (metric, metric_label) in enumerate(metrics):
             ax = axes[row, col]
-            ax.plot(severities, baseline[metric], marker='o', label='Baseline')
+            for label, method_results in methods.items():
+                ax.plot(severities, method_results[metric], marker='o', label=label)
+            ax.set_title(f'{shift_label}: {metric_label}')
+            ax.set_xlabel('Shift Severity')
+            ax.set_ylabel(metric_label)
+            ax.grid(alpha=0.25)
+            ax.legend()
+    fig.suptitle('Mitigation Comparison', fontweight='bold')
+    plt.tight_layout(rect=(0, 0, 1, 0.97))
+    comparison_path = os.path.join(save_dir, 'mitigation_comparison.png')
+    plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Mitigation comparison saved to {comparison_path}')
+
+    fig, axes = plt.subplots(3, 3, figsize=(17, 12))
+    for row, (shift_type, shift_label, severities) in enumerate(shifts):
+        baseline = _metrics_for_method(results[shift_type], 'baseline')
+        alternatives = {
+            'KDE - Baseline': _metrics_for_method(
+                results[shift_type], 'kde_reweighting'
+            ),
+            'TPR threshold - Baseline': _metrics_for_method(
+                results[shift_type], 'threshold_tpr'
+            ),
+        }
+        for col, (metric, metric_label) in enumerate(metrics):
+            ax = axes[row, col]
+            ax.axhline(0, color='black', linewidth=1)
+            for label, method_results in alternatives.items():
+                delta = (
+                    np.asarray(method_results[metric])
+                    - np.asarray(baseline[metric])
+                )
+                ax.plot(severities, delta, marker='o', label=label)
+            ax.set_title(f'{shift_label}: Δ {metric_label}')
+            ax.set_xlabel('Shift Severity')
+            ax.set_ylabel('Method - Baseline')
+            ax.grid(alpha=0.25)
+            ax.legend()
+    fig.suptitle('Mitigation Change from Baseline (negative is fairer)',
+                 fontweight='bold')
+    plt.tight_layout(rect=(0, 0, 1, 0.97))
+    delta_path = os.path.join(save_dir, 'mitigation_delta.png')
+    plt.savefig(delta_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Mitigation deltas saved to {delta_path}')
+
+
+def plot_supplementary_retraining(results, alphas, gammas, betas,
+                                  save_dir='outputs'):
+    """Compare the frozen source classifier with target-distribution retraining."""
+    if _metrics_for_method(results['group_shift'], 'target_retrained') is None:
+        print('Skipping supplementary retraining: method is absent from log.')
+        return
+
+    shifts = [
+        ('group_shift', 'Group-Conditional Base-Rate Shift', alphas),
+        ('covariate_shift', 'Covariate Shift', gammas),
+        ('label_shift', 'Asymmetric Label Noise', betas),
+    ]
+    metrics = [
+        ('dp', 'DP Difference'),
+        ('eo', 'EO Difference'),
+        ('tpr_gap', 'TPR Gap'),
+    ]
+    fig, axes = plt.subplots(3, 3, figsize=(17, 12))
+    for row, (shift_type, shift_label, severities) in enumerate(shifts):
+        baseline = _metrics_for_method(results[shift_type], 'baseline')
+        retrained = _metrics_for_method(results[shift_type], 'target_retrained')
+        for col, (metric, metric_label) in enumerate(metrics):
+            ax = axes[row, col]
+            ax.plot(severities, baseline[metric], marker='o', label='Frozen source')
             ax.plot(
                 severities,
-                reweighted[metric],
+                retrained[metric],
                 marker='s',
                 linestyle='--',
-                label='KDE reweighting',
+                label='Target retrained',
             )
             ax.set_title(f'{shift_label}: {metric_label}')
             ax.set_xlabel('Shift Severity')
             ax.set_ylabel(metric_label)
             ax.grid(alpha=0.25)
             ax.legend()
-    fig.suptitle('Baseline vs KDE Importance Reweighting', fontweight='bold')
-    plt.tight_layout()
-    comparison_path = os.path.join(save_dir, 'reweighting_comparison.png')
-    plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f'Reweighting comparison saved to {comparison_path}')
-
-    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
-    for row, (shift_type, shift_label, severities) in enumerate(shifts):
-        baseline = _metrics_for_method(results[shift_type], 'baseline')
-        reweighted = _metrics_for_method(results[shift_type], 'kde_reweighting')
-        for col, (metric, metric_label) in enumerate(metrics):
-            delta = np.asarray(reweighted[metric]) - np.asarray(baseline[metric])
-            ax = axes[row, col]
-            ax.axhline(0, color='black', linewidth=1)
-            ax.plot(severities, delta, marker='o', color='tab:purple')
-            ax.set_title(f'{shift_label}: Δ {metric_label}')
-            ax.set_xlabel('Shift Severity')
-            ax.set_ylabel('Reweighted - Baseline')
-            ax.grid(alpha=0.25)
-    fig.suptitle('Change After KDE Reweighting (negative is fairer)',
+    fig.suptitle('Supplementary: Target-Distribution Retraining',
                  fontweight='bold')
-    plt.tight_layout()
-    delta_path = os.path.join(save_dir, 'reweighting_delta.png')
-    plt.savefig(delta_path, dpi=300, bbox_inches='tight')
+    plt.tight_layout(rect=(0, 0, 1, 0.97))
+    output_path = os.path.join(save_dir, 'supplementary_target_retraining.png')
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f'Reweighting deltas saved to {delta_path}')
+    print(f'Supplementary retraining plot saved to {output_path}')
 
 
 def main(log_file=None):
@@ -319,8 +385,13 @@ def main(log_file=None):
     print("Generating separate shift-specific heatmaps...")
     plot_separate_heatmaps(results, alphas, gammas, betas, save_dir=fig_dir)
 
-    print("Generating baseline/reweighting comparisons...")
-    plot_reweighting_comparison(
+    print("Generating mitigation comparisons...")
+    plot_mitigation_comparison(
+        results, alphas, gammas, betas, save_dir=fig_dir
+    )
+
+    print("Generating supplementary target-retraining comparison...")
+    plot_supplementary_retraining(
         results, alphas, gammas, betas, save_dir=fig_dir
     )
     

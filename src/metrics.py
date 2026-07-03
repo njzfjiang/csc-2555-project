@@ -21,6 +21,13 @@ def equalized_odds_difference(y_true, y_pred, s):
     """
     return fm.equalized_odds_difference(y_true, y_pred, sensitive_features=s)
 
+
+def true_positive_rate_difference(y_true, y_pred, s):
+    """Calculate the between-group TPR gap (equal-opportunity violation)."""
+    return fm.true_positive_rate_difference(
+        y_true, y_pred, sensitive_features=s
+    )
+
 def compute_ece(probs, labels, bins=10):
     """Computes Expected Calibration Error (ECE)."""
     bin_boundaries = np.linspace(0, 1, bins + 1)
