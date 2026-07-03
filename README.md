@@ -1,23 +1,9 @@
 # csc-2555-project
-## When Demographic Parity “Improves” Under Shift: A Simulation Study of Fairness Metric Distortion
+## When Fairness Metrics Disagree Under Shift: A Simulation Study of Metric Distortion and Mitigation Trade-offs
 
 This repository contains the source code for the CSC 2555 course project (Summer 2026).
 
 **Author:** Meixuan Chen
-
----
-
-## Project Motivation
-
-Many popular group fairness metrics are defined under a fixed data distribution. However, in real
-applications the distribution often drifts: group proportions change, feature distributions shift, and
-label noise may become asymmetric. In such settings, it is unclear how to interpret changes in
-fairness metrics: an apparent improvement in demographic parity might be an artifact of shift
-rather than a genuinely fairer model, while error-based metrics such as equalized odds may degrade
-sharply.
-
-In this project, I systematically explore how different types of controlled distribution shift affect
-the behavior of standard group fairness metrics, even when the underlying classifier is kept fixed.
 
 ---
 
