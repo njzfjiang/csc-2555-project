@@ -11,6 +11,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.utils import load_sweep_results
 
 
+def _metrics_for_method(shift_results, method='baseline'):
+    """Read schema-v2 method results while remaining compatible with v1 logs."""
+    if method in shift_results:
+        return shift_results[method]
+    if method == 'baseline':
+        return shift_results
+    return None
+
+
 def find_latest_log(log_dir='outputs/logs'):
     """
     Find the most recent log file in the logs directory.
@@ -54,7 +63,11 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
     os.makedirs(save_dir, exist_ok=True)
     
     shift_types = ['group_shift', 'covariate_shift', 'label_shift']
-    shift_labels = ['Group Shift', 'Covariate Shift', 'Label Shift']
+    shift_labels = [
+        'Group-Conditional Base-Rate Shift',
+        'Covariate Shift',
+        'Label Shift',
+    ]
     severity_arrays = [alphas, gammas, betas]
     metric_types = ['dp', 'eo', 'ece_gap']
     metric_labels = ['Demographic Parity Difference', 'Equalized Odds Difference', 'ECE Gap']
@@ -63,7 +76,8 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
     vmax_per_metric = {}
     for metric in metric_types:
         vmax_per_metric[metric] = max(
-            max(results[shift][metric]) for shift in shift_types
+            max(_metrics_for_method(results[shift])[metric])
+            for shift in shift_types
         )
     
     # Create a figure with 3 rows (shift types) x 3 columns (metrics)
@@ -80,7 +94,7 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
             ax = axes[row_idx, col_idx]
             
             # Get metric data
-            metric_data = results[shift_type][metric_type]
+            metric_data = _metrics_for_method(results[shift_type])[metric_type]
             metric_array = np.array(metric_data).reshape(1, -1)
             
             # Create heatmap with metric-specific vmax for consistent scaling across shifts
@@ -133,7 +147,11 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
     os.makedirs(save_dir, exist_ok=True)
     
     shift_types = ['group_shift', 'covariate_shift', 'label_shift']
-    shift_labels = ['Group Shift', 'Covariate Shift', 'Label Shift']
+    shift_labels = [
+        'Group-Conditional Base-Rate Shift',
+        'Covariate Shift',
+        'Label Shift',
+    ]
     severity_arrays = [alphas, gammas, betas]
     metric_types = ['dp', 'eo', 'ece_gap']
     metric_labels = ['Demographic Parity\nDifference', 'Equalized Odds\nDifference', 'ECE Gap']
@@ -142,7 +160,8 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
     vmax_per_metric = {}
     for metric in metric_types:
         vmax_per_metric[metric] = max(
-            max(results[shift][metric]) for shift in shift_types
+            max(_metrics_for_method(results[shift])[metric])
+            for shift in shift_types
         )
     
     # Create separate figure for each shift type
@@ -155,7 +174,9 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
             ax = axes[col_idx]
             
             # Get metric data
-            metric_data = np.array(results[shift_type][metric_type]).reshape(1, -1)
+            metric_data = np.array(
+                _metrics_for_method(results[shift_type])[metric_type]
+            ).reshape(1, -1)
             
             # Create heatmap with metric-specific vmax for consistent scaling
             sns.heatmap(
@@ -186,6 +207,69 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
         plt.close()
 
 
+def plot_reweighting_comparison(results, alphas, gammas, betas,
+                                save_dir='outputs'):
+    """Plot baseline versus KDE-reweighted DP/EO and their signed deltas."""
+    if _metrics_for_method(results['group_shift'], 'kde_reweighting') is None:
+        print('Skipping reweighting comparison: selected log uses schema v1.')
+        return
+
+    os.makedirs(save_dir, exist_ok=True)
+    shifts = [
+        ('group_shift', 'Group-Conditional Base-Rate Shift', alphas),
+        ('covariate_shift', 'Covariate Shift', gammas),
+        ('label_shift', 'Asymmetric Label Noise', betas),
+    ]
+    metrics = [('dp', 'DP Difference'), ('eo', 'EO Difference')]
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
+    for row, (shift_type, shift_label, severities) in enumerate(shifts):
+        baseline = _metrics_for_method(results[shift_type], 'baseline')
+        reweighted = _metrics_for_method(results[shift_type], 'kde_reweighting')
+        for col, (metric, metric_label) in enumerate(metrics):
+            ax = axes[row, col]
+            ax.plot(severities, baseline[metric], marker='o', label='Baseline')
+            ax.plot(
+                severities,
+                reweighted[metric],
+                marker='s',
+                linestyle='--',
+                label='KDE reweighting',
+            )
+            ax.set_title(f'{shift_label}: {metric_label}')
+            ax.set_xlabel('Shift Severity')
+            ax.set_ylabel(metric_label)
+            ax.grid(alpha=0.25)
+            ax.legend()
+    fig.suptitle('Baseline vs KDE Importance Reweighting', fontweight='bold')
+    plt.tight_layout()
+    comparison_path = os.path.join(save_dir, 'reweighting_comparison.png')
+    plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Reweighting comparison saved to {comparison_path}')
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
+    for row, (shift_type, shift_label, severities) in enumerate(shifts):
+        baseline = _metrics_for_method(results[shift_type], 'baseline')
+        reweighted = _metrics_for_method(results[shift_type], 'kde_reweighting')
+        for col, (metric, metric_label) in enumerate(metrics):
+            delta = np.asarray(reweighted[metric]) - np.asarray(baseline[metric])
+            ax = axes[row, col]
+            ax.axhline(0, color='black', linewidth=1)
+            ax.plot(severities, delta, marker='o', color='tab:purple')
+            ax.set_title(f'{shift_label}: Δ {metric_label}')
+            ax.set_xlabel('Shift Severity')
+            ax.set_ylabel('Reweighted - Baseline')
+            ax.grid(alpha=0.25)
+    fig.suptitle('Change After KDE Reweighting (negative is fairer)',
+                 fontweight='bold')
+    plt.tight_layout()
+    delta_path = os.path.join(save_dir, 'reweighting_delta.png')
+    plt.savefig(delta_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Reweighting deltas saved to {delta_path}')
+
+
 def main(log_file=None):
     """
     Main function to plot phase diagrams from cached log results.
@@ -204,23 +288,23 @@ def main(log_file=None):
     if log_file is None:
         log_file = find_latest_log(log_dir='outputs/logs')
         if log_file is None:
-            print("\n❌ ERROR: No log files found in outputs/logs/")
+            print("\nERROR: No log files found in outputs/logs/")
             print("   Please run: python experiments/run_sweep.py")
             print("   to generate results first.\n")
             return
-        print(f"\n✓ Using latest log: {log_file}")
+        print(f"\nUsing latest log: {log_file}")
     else:
         if not os.path.exists(log_file):
-            print(f"\n❌ ERROR: Log file not found: {log_file}\n")
+            print(f"\nERROR: Log file not found: {log_file}\n")
             return
-        print(f"\n✓ Using log: {log_file}")
+        print(f"\nUsing log: {log_file}")
     
     # Load results from log
     print("Loading results from cache...")
     try:
         results, alphas, gammas, betas = load_sweep_results(log_file)
     except Exception as e:
-        print(f"\n❌ ERROR: Could not load log file: {e}\n")
+        print(f"\nERROR: Could not load log file: {e}\n")
         return
     
     # Create figures directory if it doesn't exist
@@ -234,6 +318,11 @@ def main(log_file=None):
     # Plot separate heatmaps (cleaner visualization)
     print("Generating separate shift-specific heatmaps...")
     plot_separate_heatmaps(results, alphas, gammas, betas, save_dir=fig_dir)
+
+    print("Generating baseline/reweighting comparisons...")
+    plot_reweighting_comparison(
+        results, alphas, gammas, betas, save_dir=fig_dir
+    )
     
     print("\n" + "="*60)
     print("Phase diagram visualization complete!")

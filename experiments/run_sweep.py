@@ -7,12 +7,12 @@ import json
 import argparse
 from datetime import datetime
 from sklearn.linear_model import LogisticRegression
-
-
+from sklearn.metrics import balanced_accuracy_score
 
 from src.utils import load_config
 from src.data_generator import generate_data
 from src.shifts import group_shift, covariate_shift, label_shift
+from src.reweighting import compute_importance_weights_kde, effective_sample_size
 from src.metrics import (
     demographic_parity_difference, 
     equalized_odds_difference, 
@@ -20,7 +20,12 @@ from src.metrics import (
 )
 
 
-def train_classifier(X_train, y_train, X_test, seed=42):
+METRIC_KEYS = ("dp", "eo", "ece_gap", "balanced_accuracy")
+METHOD_KEYS = ("baseline", "kde_reweighting")
+
+
+def train_classifier(X_train, y_train, X_test, seed=42, sample_weight=None,
+                     model_config=None):
     """
     Train a logistic regression classifier on unshifted training data 
     and return predictions and probabilities on test data.
@@ -43,29 +48,162 @@ def train_classifier(X_train, y_train, X_test, seed=42):
     y_proba : array-like
         Predicted probabilities for class 1 on test data
     """
-    clf = LogisticRegression(random_state=seed, max_iter=1000, solver='lbfgs')
-    clf.fit(X_train, y_train)
+    model_config = model_config or {}
+    clf = LogisticRegression(
+        random_state=model_config.get('random_state', seed),
+        max_iter=model_config.get('max_iter', 1000),
+        solver=model_config.get('solver', 'lbfgs'),
+    )
+    clf.fit(X_train, y_train, sample_weight=sample_weight)
     y_pred = clf.predict(X_test)
     y_proba = clf.predict_proba(X_test)[:, 1]
     return y_pred, y_proba
 
 
-def evaluate_shift(X, y, s, y_pred, y_proba):
+def evaluate_shift(X, y, s, y_pred, y_proba, ece_bins=10):
     """
     Evaluate DP, EO, and ECE gap for a given dataset and predictions.
     """
     dp_diff = demographic_parity_difference(y, y_pred, s)
     eo_diff = equalized_odds_difference(y, y_pred, s)
-    _, ece_gap = calculate_group_ece_metrics(y_proba, y, s, bins=10)
+    _, ece_gap = calculate_group_ece_metrics(y_proba, y, s, bins=ece_bins)
     
     return {
         'dp': np.abs(dp_diff),  # Use absolute value for visualization
         'eo': np.abs(eo_diff),
-        'ece_gap': ece_gap
+        'ece_gap': ece_gap,
+        'balanced_accuracy': balanced_accuracy_score(y, y_pred),
     }
 
 
-def generate_phase_diagram_data(config,seed=42):
+def _empty_shift_results():
+    return {
+        method: {metric: [] for metric in METRIC_KEYS}
+        for method in METHOD_KEYS
+    } | {
+        'diagnostics': {
+            'ess': [],
+            'ess_fraction': [],
+            'weight_min': [],
+            'weight_max': [],
+        }
+    }
+
+
+def _data_kwargs(data_config, num_samples):
+    return {
+        'num_samples': num_samples,
+        'num_features': data_config.get('num_features', 2),
+        'prior_a': data_config.get('prior_a', 0.5),
+        'base_rate_a': data_config.get('base_rate_a', 0.3),
+        'base_rate_b': data_config.get('base_rate_b', 0.3),
+    }
+
+
+def _generate_shift(shift_type, severity, data_config, shift_config,
+                    seed, num_samples):
+    kwargs = _data_kwargs(data_config, num_samples)
+    if shift_type == 'group_shift':
+        if not np.isclose(kwargs['base_rate_a'], kwargs['base_rate_b']):
+            raise ValueError(
+                'group_shift requires equal baseline base_rate_a/base_rate_b'
+            )
+        base_rate = kwargs.pop('base_rate_a')
+        kwargs.pop('base_rate_b')
+        return group_shift(
+            severity=severity,
+            seed=seed,
+            base_rate=base_rate,
+            delta=shift_config.get('delta', 0.2),
+            **kwargs,
+        )
+    if shift_type == 'covariate_shift':
+        return covariate_shift(
+            severity=severity,
+            group=shift_config.get('target_group', 'A'),
+            seed=seed,
+            **kwargs,
+        )
+    if shift_type == 'label_shift':
+        return label_shift(severity=severity, seed=seed, **kwargs)
+    raise ValueError(f'Unknown shift type: {shift_type}')
+
+
+def _evaluate_severity(
+    results,
+    shift_type,
+    severity,
+    shift_config,
+    data_config,
+    model_config,
+    reweighting_config,
+    X_train,
+    y_train,
+    seed,
+    ece_bins,
+):
+    X_test, y_test, s_test = _generate_shift(
+        shift_type,
+        severity,
+        data_config,
+        shift_config,
+        seed,
+        data_config['num_samples'],
+    )
+    y_pred, y_proba = train_classifier(
+        X_train, y_train, X_test, seed=seed, model_config=model_config
+    )
+    baseline = evaluate_shift(
+        X_test, y_test, s_test, y_pred, y_proba, ece_bins=ece_bins
+    )
+
+    adaptation_seed = seed + reweighting_config.get('adaptation_seed_offset', 10000)
+    X_adapt, _, _ = _generate_shift(
+        shift_type,
+        severity,
+        data_config,
+        shift_config,
+        adaptation_seed,
+        reweighting_config.get('adaptation_num_samples', 1000),
+    )
+    weights = compute_importance_weights_kde(
+        X_train,
+        X_adapt,
+        bandwidth=reweighting_config.get('bandwidth', 0.3),
+        clip_min=reweighting_config.get('clip_min', 0.1),
+        clip_max=reweighting_config.get('clip_max', 10.0),
+        max_fit_samples=reweighting_config.get('max_fit_samples', 1000),
+        random_state=seed,
+    )
+    weighted_pred, weighted_proba = train_classifier(
+        X_train,
+        y_train,
+        X_test,
+        seed=seed,
+        sample_weight=weights,
+        model_config=model_config,
+    )
+    reweighted = evaluate_shift(
+        X_test,
+        y_test,
+        s_test,
+        weighted_pred,
+        weighted_proba,
+        ece_bins=ece_bins,
+    )
+
+    for metric in METRIC_KEYS:
+        results[shift_type]['baseline'][metric].append(baseline[metric])
+        results[shift_type]['kde_reweighting'][metric].append(reweighted[metric])
+    ess = effective_sample_size(weights)
+    diagnostics = results[shift_type]['diagnostics']
+    diagnostics['ess'].append(ess)
+    diagnostics['ess_fraction'].append(ess / len(weights))
+    diagnostics['weight_min'].append(float(weights.min()))
+    diagnostics['weight_max'].append(float(weights.max()))
+
+
+def generate_phase_diagram_data(config, seed=42):
     """
     Generate data for phase diagrams across three shift types.
     
@@ -109,44 +247,54 @@ def generate_phase_diagram_data(config,seed=42):
     
     # Initialize results matrices
     results = {
-        'group_shift': {'dp': [], 'eo': [], 'ece_gap': []},
-        'covariate_shift': {'dp': [], 'eo': [], 'ece_gap': []},
-        'label_shift': {'dp': [], 'eo': [], 'ece_gap': []}
+        'group_shift': _empty_shift_results(),
+        'covariate_shift': _empty_shift_results(),
+        'label_shift': _empty_shift_results(),
     }
+    model_cfg = config.get('model', {})
+    reweighting_cfg = config.get('reweighting', {})
+    ece_bins = config.get('metrics', {}).get('ece_bins', 10)
     
     print("Generating phase diagram data...")
     
     # Group Shift
     print("  Group shift...", end='', flush=True)
     for severity in alphas:
-        X_test, y_test, s_test = group_shift(severity=severity, seed=seed)
-        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=seed)
-        metrics = evaluate_shift(X_test, y_test, s_test, y_pred, y_proba)
-        for metric in ['dp', 'eo', 'ece_gap']:
-            results['group_shift'][metric].append(metrics[metric])
-    print(" ✓")
+        _evaluate_severity(
+            results, 'group_shift', severity, group_cfg, data_cfg, model_cfg,
+            reweighting_cfg, X_train, y_train, seed, ece_bins
+        )
+    print(" done")
     
     # Covariate Shift
     print("  Covariate shift...", end='', flush=True)
     for severity in gammas:
-        X_test, y_test, s_test = covariate_shift(severity=severity, group=target_group, seed=seed)
-        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=seed)
-        metrics = evaluate_shift(X_test, y_test, s_test, y_pred, y_proba)
-        for metric in ['dp', 'eo', 'ece_gap']:
-            results['covariate_shift'][metric].append(metrics[metric])
-    print(" ✓")
+        _evaluate_severity(
+            results, 'covariate_shift', severity, cov_cfg, data_cfg, model_cfg,
+            reweighting_cfg, X_train, y_train, seed, ece_bins
+        )
+    print(" done")
     
     # Label Shift
     print("  Label shift...", end='', flush=True)
     for severity in betas:
-        X_test, y_test, s_test = label_shift(severity=severity, seed=seed)
-        y_pred, y_proba = train_classifier(X_train, y_train, X_test, seed=seed)
-        metrics = evaluate_shift(X_test, y_test, s_test, y_pred, y_proba)
-        for metric in ['dp', 'eo', 'ece_gap']:
-            results['label_shift'][metric].append(metrics[metric])
-    print(" ✓")
+        _evaluate_severity(
+            results, 'label_shift', severity, label_cfg, data_cfg, model_cfg,
+            reweighting_cfg, X_train, y_train, seed, ece_bins
+        )
+    print(" done")
     
     return results, alphas, gammas, betas
+
+
+def _json_ready(value):
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    return value
 
 
 def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
@@ -170,24 +318,19 @@ def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
     
     # Prepare data for JSON serialization
     output_data = {
+        'schema_version': 2,
         'timestamp': timestamp,
         'alphas': alphas.tolist() if isinstance(alphas, np.ndarray) else list(alphas),
         'gammas': gammas.tolist() if isinstance(gammas, np.ndarray) else list(gammas),
         'betas': betas.tolist() if isinstance(betas, np.ndarray) else list(betas),
-        'results': {
-            shift_type: {
-                metric: [float(v) for v in values]
-                for metric, values in metrics_dict.items()
-            }
-            for shift_type, metrics_dict in results.items()
-        }
+        'results': _json_ready(results),
     }
     
     # Save to JSON
     with open(log_file, 'w') as f:
         json.dump(output_data, f, indent=2)
     
-    print(f"✓ Results saved to {log_file}")
+    print(f"Results saved to {log_file}")
     return log_file
 
 
@@ -209,28 +352,25 @@ def run_sweep(config, seed=42):
     print("RESULTS SUMMARY")
     print("="*60 + "\n")
     
-    # Print summary statistics
-    print("GROUP SHIFT:")
-    print(f"  DP range: [{min(results['group_shift']['dp']):.4f}, {max(results['group_shift']['dp']):.4f}]")
-    print(f"  EO range: [{min(results['group_shift']['eo']):.4f}, {max(results['group_shift']['eo']):.4f}]")
-    print(f"  ECE Gap range: [{min(results['group_shift']['ece_gap']):.4f}, {max(results['group_shift']['ece_gap']):.4f}]")
-    
-    print("\nCOVARIATE SHIFT:")
-    print(f"  DP range: [{min(results['covariate_shift']['dp']):.4f}, {max(results['covariate_shift']['dp']):.4f}]")
-    print(f"  EO range: [{min(results['covariate_shift']['eo']):.4f}, {max(results['covariate_shift']['eo']):.4f}]")
-    print(f"  ECE Gap range: [{min(results['covariate_shift']['ece_gap']):.4f}, {max(results['covariate_shift']['ece_gap']):.4f}]")
-    
-    print("\nLABEL SHIFT:")
-    print(f"  DP range: [{min(results['label_shift']['dp']):.4f}, {max(results['label_shift']['dp']):.4f}]")
-    print(f"  EO range: [{min(results['label_shift']['eo']):.4f}, {max(results['label_shift']['eo']):.4f}]")
-    print(f"  ECE Gap range: [{min(results['label_shift']['ece_gap']):.4f}, {max(results['label_shift']['ece_gap']):.4f}]")
+    for shift_type in ('group_shift', 'covariate_shift', 'label_shift'):
+        print(f"{shift_type.upper()}:")
+        for method in METHOD_KEYS:
+            dp = results[shift_type][method]['dp']
+            eo = results[shift_type][method]['eo']
+            print(
+                f"  {method}: DP [{min(dp):.4f}, {max(dp):.4f}], "
+                f"EO [{min(eo):.4f}, {max(eo):.4f}]"
+            )
+        ess = results[shift_type]['diagnostics']['ess_fraction']
+        print(f"  ESS fraction: [{min(ess):.3f}, {max(ess):.3f}]\n")
     
     print("\n" + "="*60)
     print("SAVING RESULTS")
     print("="*60 + "\n")
     
     # Save results to logs directory
-    save_results(results, alphas, gammas, betas, log_dir='outputs/logs')
+    log_dir = config.get('output', {}).get('log_dir', 'outputs/logs')
+    save_results(results, alphas, gammas, betas, log_dir=log_dir)
     
     print("\n" + "="*60 + "\n")
     
@@ -245,4 +385,4 @@ if __name__ == '__main__':
     
     config = load_config(args.config)
     seed = config.get('experiment', {}).get('seed', 42)
-    run_sweep(config, seed=seed) 
+    run_sweep(config, seed=seed)

@@ -128,7 +128,7 @@ def generate_data(num_samples=1000,
     X[:, 0] = np.random.normal(loc=mean, scale=scale)
 
     for j in range(1, num_features):
-        X[:, j] = np.random.normal(0, 1)
+        X[:, j] = np.random.normal(0, 1, size=num_samples)
     
     # 3. introduce label noise (flip) based on group s and label y
     # Group A (s=0) and (y=1)

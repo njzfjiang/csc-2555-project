@@ -6,7 +6,7 @@
 experiment:
   name: "fairness_shift_phase_diagram"
   seed: 42
-  description: "Sweep group prior, covariate, and label shifts to map DP/EO divergence."
+  description: "Sweep group-conditional base rates, covariates, and label noise to map DP/EO divergence."
 
 # --- Data Generation Parameters ---
 data:
@@ -18,7 +18,7 @@ data:
 
 # --- Shift Parameters (Sweep Ranges) ---
 shifts:
-  # 1. Group Prior Shift (α)
+  # 1. Group-Conditional Base-Rate Shift (α)
   group_shift:
     severity_min: 0.0
     severity_max: 1.0
@@ -48,6 +48,15 @@ model:
 # --- Metrics Parameters ---
 metrics:
   ece_bins: 10               # ECE（Expected Calibration Error）bins
+
+# --- KDE Importance Reweighting ---
+reweighting:
+  bandwidth: 0.3
+  clip_min: 0.1
+  clip_max: 10.0
+  adaptation_num_samples: 1000
+  adaptation_seed_offset: 10000
+  max_fit_samples: 1000
 
 # --- Output Paths ---
 output:
