@@ -1,5 +1,5 @@
 # csc-2555-project
-## When Fairness Metrics Disagree Under Shift: A Simulation Study of Metric Distortion and Mitigation Trade-offs
+## When Fairness Metrics Disagree Under Shift: A Stylized Case Study of a Medical Follow-up Risk Score under Hospital Deployment Shift
 
 This repository contains the source code for the CSC 2555 course project (Summer 2026).
 

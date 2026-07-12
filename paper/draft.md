@@ -2,20 +2,20 @@
 
 ## 1. Introduction
 
-  Group fairness metrics such as demographic parity and equalized odds are usually defined under a fixed data-generating process. However, real-world deployments rarely enjoy such stability.
-  
-  Consider a binary risk score that decides whether a patient should be referred for further testing / specialist follow-up. A logistic regression model is trained on data from a 'source' hospital and then deployed in a different 'target' hospital with different patient mix and coding patterns. 
-  
-  Although this may seem like a 'reasonable' real-world application of the model, it is often not safe to assume fairness metrics always behave the same under shifts in the underlying data structure. Under such circumstances, fairness metrics defined under a fixed data-generating process may behave unpredictably.
+Group fairness metrics such as demographic parity and equalized odds are usually defined under a fixed data-generating process. However, real-world deployments rarely enjoy such stability, especially when risk scores are moved across hospitals or regions with different patient populations.
+
+Consider a binary risk score that decides whether a patient should be referred for further testing / specialist follow-up. A logistic regression model is trained on data from a 'source' hospital and then deployed in a different 'target' hospital with different patient mix and coding patterns.
+
+Although this may seem like a plausible real-world application of the model, it is often not safe to assume fairness metrics always behave the same under shifts in the underlying data structure. In particular, a hospital may monitor one fairness metric (e.g., demographic parity) on a dashboard and implicitly assume that other notions of equity will move in the same direction. Under such circumstances, fairness metrics defined under a fixed data-generating process may behave unpredictably.
 
 
 In this project, we ask:
 
 - How do standard group fairness metrics behave under controlled distribution shifts, even when the underlying classifier remains fixed?
-- Under what conditions can demographic parity remain stable or appear comparatively favorable while error-based metrics degrade? 
+- Under what conditions can demographic parity remain stable or appear comparatively favorable while error-based metrics degrade?
 - How do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect the observed fairness distortion, and what trade-offs do they incur?
 
-We address these questions through a synthetic simulation framework mimicking a medical follow-up risk score, which allows us to systematically sweep over and analyze different types and magnitudes of distribution shift in this specific setting.
+We address these questions through a synthetic simulation framework mimicking a medical follow-up risk score, which allows us to systematically sweep over and analyze different types and magnitudes of distribution shift in this cross-hospital deployment setting.
 
 ## 2. Method
 
@@ -29,27 +29,23 @@ target-distribution retraining.
 
 #### 2.1.1 Group-conditioned base-rate shift
 
-The function `group_shift(severity)` varies the group-conditioned base rates of the positive class
-while keeping the feature generator otherwise fixed. Concretely, we define
+The function `group_shift(severity)` varies the group-conditioned base rates of the positive class while keeping the feature generator otherwise fixed. Concretely, we define
 
 - \( \Pr(Y=1 \mid S=0) = 0.3 + 0.2 \cdot \alpha \),
 - \( \Pr(Y=1 \mid S=1) = 0.3 - 0.2 \cdot \alpha \),
 
 with \(\alpha \in [0,1]\). Increasing the severity therefore simultaneously increases the
 positive rate for group A and decreases it for group B. The function `group_shift` passes the
-corresponding base rates to `generate_data` and returns the resulting features \(X\), labels \(Y\),
-and group labels \(S\).
+corresponding base rates to `generate_data` and returns the resulting features \(X\), labels \(Y\), and group labels \(S\).
 
-This family of shifts induces **asymmetric changes in label prevalence across groups** while keeping
-the conditional feature generator \(P(X\mid Y,S)\) fixed. Because \(X\) depends on \(Y\), its
-marginal distribution can still change as the base rates change.
+This family of shifts induces **asymmetric changes in label prevalence across groups** while keeping the conditional feature generator \(P(X\mid Y,S)\) fixed. Because \(X\) depends on \(Y\), its marginal distribution can still change as the base rates change, even though the conditional generator is fixed; from the perspective of an observer who does not see \(Y\), this may resemble a covariate shift.
 
 In a hospital deployment context, this corresponds to a scenario where the target hospital serves a patient population with a different group-specific prevalence of the underlying condition (e.g., different referral patterns or catchment demographics), while the clinical manifestation of the condition given group membership remains the same.
 
 #### 2.1.2 Group-specific covariate shift
 
 The function `covariate_shift(severity, group)` implements a **covariate shift** that affects the
-scale of a particular feature dimension for one group only. We treat `severity` as a multiplicative
+scale of a particular feature dimension for one group only. We treat `severity` \(\gamma\) as a multiplicative
 scale factor applied to the standard deviation of that feature for the chosen group, with
 \(\mathrm{severity} \in [1, 4]\). Formally,
 
@@ -62,19 +58,15 @@ accordingly. The labels and group labels themselves are left unchanged.
 This family of shifts isolates the effect of **within-group feature distribution changes** on
 fairness metrics, without directly altering label noise or group proportions.
 
-This mimics a setting where the target hospital's measurement or documentation practices differ for one demographic group (e.g., different laboratory equipment or coding standards), resulting in a change in the marginal distribution of a clinical feature for that group only.
+This mimics a setting where the target hospital's measurement or documentation practices differ for one demographic group (e.g., different laboratory equipment or measurement protocols), resulting in a change in the marginal distribution of a clinical feature for that group only.
 
 #### 2.1.3 Group-specific label noise shift
 
-Finally, the function `label_shift(severity)` modifies the **label noise** asymmetrically across
-groups. Here, `severity` (chosen in \([0, 0.3]\)) controls the probability with which positive labels
-for group A and, at half that rate, negative labels for group B are flipped. Concretely, we call
+Finally, the function `label_shift(severity)` modifies the **label noise** asymmetrically across groups. Here, `severity` (chosen in \([0, 0.3]\)) controls the probability with which positive labels for group A and, at half that rate, negative labels for group B are flipped. Concretely, we call
 
 - `generate_data(flip_noise_a=severity)`,
 
-which flips positive labels in group A with probability \(\beta\) and negative labels in group B
-with probability \(\beta/2\). Features are generated before these flips, so the marginal \(X\)
-distribution is unchanged even though the relationship between observed labels and features is altered asymmetrically.
+which flips positive labels in group A with probability \(\beta\) and negative labels in group B with probability \(\beta/2\). Features are generated before these flips, so the marginal \(X\) distribution is unchanged even though the relationship between observed labels and features is altered asymmetrically.
 
 This corresponds to asymmetric diagnostic coding errors across groups in the target hospital (e.g., differential mis-documentation of follow-up need in electronic health records for one group).
 
@@ -99,6 +91,8 @@ We focus on three standard group fairness quantities implemented via `fairlearn.
   \]
   A value of 0 corresponds to perfect demographic parity. We compute this quantity using
   `fairlearn.metrics.demographic_parity_difference`.
+  In our setting, a large DP difference means that one group is receiving more referrals than the other.
+
 
 - **Equalized odds difference (EO diff).** We measure the worst-case discrepancy across groups in
   both true positive and false positive rates:
@@ -110,6 +104,7 @@ We focus on three standard group fairness quantities implemented via `fairlearn.
   \]
   A value of 0 corresponds to perfect equalized odds. We compute this quantity using
   `fairlearn.metrics.equalized_odds_difference`.
+  In our setting, a large EO difference means that either missed follow-up (TPR gap) or unnecessary referrals (FPR gap) are distributed unevenly between groups.
 
 - **True-positive-rate gap (TPR gap).** We separately report
   \(\lvert \mathrm{TPR}_0-\mathrm{TPR}_1\rvert\), the equal-opportunity violation. This is necessary
@@ -140,8 +135,8 @@ To capture **group-wise calibration**, we compute ECE separately for each group 
   = \max_{a} \mathrm{ECE}_a - \min_{a} \mathrm{ECE}_a.
 \]
 
-This is implemented in `src/metrics.py` as `calculate_group_ece_metrics`, which returns both the
-per-group ECEs and their gap.
+This is implemented in `src/metrics.py` as `calculate_group_ece_metrics`, which returns both the per-group ECEs and their gap.
+A large ECE gap indicates that for some groups, predicted follow-up risks are systematically over- or under-confident, which may interact with thresholding policies in opaque ways.
 
 We also report balanced accuracy to expose utility changes that may accompany an apparent fairness
 improvement.
@@ -197,20 +192,19 @@ We sweep over the following grids:
 
 ### 4.1 Key empirical findings
 
+Across all three shift families, we observe that demographic parity, error-based metrics, and calibration can move in markedly different directions.
 Our main results are summarized below. Baseline phase diagrams, mitigation comparisons, and the
 target-retraining supplementary figure are saved in `outputs/figures/`.
 
 **Diagnosis (RQ1 & RQ2):**
-- Under **group-conditioned base-rate shift**, DP increases from 0.01 to 0.26 as \(\alpha\) goes from
-  0 to 1, while the TPR gap remains between approximately 0.03 and 0.06. The two metric families therefore react very differently to the same prevalence change.
+- Under **group-conditioned base-rate shift**, DP increases from 0.01 to 0.26 as \(\alpha\) goes from 0 to 1, while the TPR gap remains between approximately 0.03 and 0.06. The two metric families therefore react very differently to the same prevalence change.
 
-- Under **covariate shift**, DP grows from 0.01 to 0.18, EO reaches 0.30, and the TPR gap reaches 0.12 at \(\gamma=4\). In this regime both DP and error-based fairness degrade, but at different rates.
+- Under **covariate shift**, DP grows from 0.01 to 0.18, EO reaches 0.30, and the TPR gap reaches 0.12 at \(\gamma=4\). The ECE gap also becomes large, reaching approximately 0.32. In this regime several metrics worsen together, but at different rates, illustrating that they need not signal the same level of concern.
 
-- Under **asymmetric label noise**, DP stays artificially flat at 0.01 even as the TPR gap worsens from 0.03 to 0.18. 
-  This is the most deceptive regime from a clinical equity standpoint: a static DP value would suggest that the referral rate is balanced across groups, yet the underlying TPR gap implies that one group is being systematically under-referred for necessary follow-up.
+- Under **asymmetric label noise**, DP stays artificially flat at 0.01 even as the TPR gap worsens from 0.03 to 0.18. This is the most deceptive regime from a clinical equity standpoint: a static DP value would suggest that the referral rate is balanced across groups, yet the underlying TPR gap implies that one group is being systematically under-referred for necessary follow-up.
 
 **Mitigation (RQ3):**
-- **KDE Reweighting:** Nearly ineffective. The ESS fraction ranges from 0.762 to 0.950 across the experiments, so clipping does not collapse the effective sample, but the resulting DP and EO curves remain close to the frozen baseline.
+- **KDE Reweighting:** Nearly ineffective. The ESS fraction ranges from 0.762 to 0.950 across the experiments, so clipping does not collapse the effective sample, but the resulting DP and EO curves remain close to the frozen baseline. This suggests that density-ratio reweighting alone is insufficient to recover fairness in this setting, especially when the shift affects label prevalence or label noise rather than only the marginal feature distribution.
 
 - **Threshold Adjustment:** Under covariate shift it reduces the maximum TPR gap from 0.124 to 0.018, yet the maximum EO difference rises from 0.298 to 0.408 because the FPR gap grows. Under label shift it lowers the maximum TPR gap from 0.176 to 0.030 but raises DP from approximately 0.012 to as much as 0.178; at \(\beta=0.3\), the calibrated threshold for group B is 0.16.
 
@@ -227,13 +221,9 @@ We emphasize regions where demographic parity remains stable or changes slowly w
 Our simulations reveal several patterns:
 
 - A stable or comparatively favorable demographic-parity value can mask large changes in
-  error-based fairness; the asymmetric-label-noise experiment is the clearest example. In practice, this means that a hospital dashboard that only monitors demographic parity may fail to detect inequities in access to follow-up care.
+  error-based fairness; the asymmetric-label-noise experiment is the clearest example. In practice, this means that a hospital dashboard that only monitors demographic parity may fail to detect inequities in access to follow-up care. In our stylized setting, this would naturally lead a hospital deploying a follow-up risk score to track at least DP, TPR gaps, and calibration gaps side by side.
 
-- Error-based metrics such as equalized odds can degrade sharply under certain shifts, even when
-  the classifier is unchanged. This suggests that error-based fairness metrics should be monitored
-  alongside DP in deployment, especially when the target population differs from the training
-  population. In this setting, the TPR gap is especially relevant because missed necessary follow-up
-  can correspond to unequal access to care.
+- Error-based metrics such as equalized odds can degrade sharply under certain shifts, even when the classifier is unchanged. This suggests that error-based fairness metrics should be monitored alongside DP in deployment, especially when the target population differs from the training population. In this setting, the TPR gap is especially relevant because missed necessary follow-up can correspond to unequal access to care.
 
 - Different metrics can therefore disagree not only in level but in trend as the environment drifts. For clinical decision support systems, this implies that fairness monitoring cannot rely on a single metric; the choice of metric should be guided by the specific equity concern (e.g., equal access vs. equal accuracy).
 
@@ -250,6 +240,8 @@ We presented a synthetic simulation framework for studying how standard group fa
 
 - a stable or comparatively favorable demographic-parity value can be misleading in clinical deployment settings,
 - error-based metrics provide complementary information but can themselves be unstable.
+
+Together, these findings caution against over-interpreting any single fairness statistic as a stable “fairness guarantee” once a model is moved across hospitals or patient populations.
 
 Future directions include:
 
