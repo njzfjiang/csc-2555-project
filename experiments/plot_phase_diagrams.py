@@ -11,6 +11,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.utils import load_sweep_results
 
 
+PHASE_METRICS = [
+    ('dp', 'Demographic Parity Difference'),
+    ('eo', 'Equalized Odds Difference'),
+    ('tpr_gap', 'TPR Gap'),
+    ('ece_gap', 'ECE Gap'),
+]
+
+
 def _metrics_for_method(shift_results, method='baseline'):
     """Read schema-v2 method results while remaining compatible with v1 logs."""
     if method in shift_results:
@@ -18,6 +26,30 @@ def _metrics_for_method(shift_results, method='baseline'):
     if method == 'baseline':
         return shift_results
     return None
+
+
+def _available_phase_metrics(results, shift_types):
+    """Return metrics present in every baseline shift result.
+
+    TPR gap was introduced in schema-v3 logs, so older cached sweeps retain the
+    original three-metric phase-diagram layout instead of failing at plot time.
+    """
+    return [
+        (metric, label)
+        for metric, label in PHASE_METRICS
+        if all(
+            metric in _metrics_for_method(results[shift])
+            for shift in shift_types
+        )
+    ]
+
+
+def _method_available(results, shift_types, method):
+    """Return whether a method is present for every requested shift type."""
+    return all(
+        _metrics_for_method(results[shift], method) is not None
+        for shift in shift_types
+    )
 
 
 def find_latest_log(log_dir='outputs/logs'):
@@ -43,9 +75,9 @@ def find_latest_log(log_dir='outputs/logs'):
 
 def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
     """
-    Plot phase diagrams (heatmaps) for DP, EO, and ECE gap across shift types.
+    Plot phase diagrams for DP, EO, TPR gap, and ECE gap across shift types.
     
-    Creates a 3x3 grid of heatmaps showing all metrics and shift types.
+    Creates a grid of heatmaps showing all available metrics and shift types.
     
     Parameters:
     -----------
@@ -69,8 +101,9 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
         'Label Shift',
     ]
     severity_arrays = [alphas, gammas, betas]
-    metric_types = ['dp', 'eo', 'ece_gap']
-    metric_labels = ['Demographic Parity Difference', 'Equalized Odds Difference', 'ECE Gap']
+    phase_metrics = _available_phase_metrics(results, shift_types)
+    metric_types = [metric for metric, _ in phase_metrics]
+    metric_labels = [label for _, label in phase_metrics]
     
     # Calculate vmax for each metric (across all shifts) for consistent scaling
     vmax_per_metric = {}
@@ -80,8 +113,9 @@ def plot_phase_diagrams(results, alphas, gammas, betas, save_dir='outputs'):
             for shift in shift_types
         )
     
-    # Create a figure with 3 rows (shift types) x 3 columns (metrics)
-    fig, axes = plt.subplots(3, 3, figsize=(16, 12))
+    # Create one row per shift type and one column per available metric.
+    fig_width = 5 * len(metric_types) + 1
+    fig, axes = plt.subplots(3, len(metric_types), figsize=(fig_width, 12))
     fig.suptitle('Phase Diagrams: Fairness Metrics Under Distribution Shifts', 
                  fontsize=16, fontweight='bold', y=0.995)
     
@@ -153,8 +187,10 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
         'Label Shift',
     ]
     severity_arrays = [alphas, gammas, betas]
-    metric_types = ['dp', 'eo', 'ece_gap']
-    metric_labels = ['Demographic Parity\nDifference', 'Equalized Odds\nDifference', 'ECE Gap']
+    phase_metrics = _available_phase_metrics(results, shift_types)
+    metric_types = [metric for metric, _ in phase_metrics]
+    metric_labels = [label.replace(' Difference', '\nDifference')
+                     for _, label in phase_metrics]
     
     # Calculate vmax for each metric (across all shifts) for consistent scaling
     vmax_per_metric = {}
@@ -166,7 +202,8 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
     
     # Create separate figure for each shift type
     for shift_type, shift_label, severities in zip(shift_types, shift_labels, severity_arrays):
-        fig, axes = plt.subplots(1, 3, figsize=(14, 3))
+        fig_width = 4.5 * len(metric_types) + 0.5
+        fig, axes = plt.subplots(1, len(metric_types), figsize=(fig_width, 3))
         fig.suptitle(f'Fairness Metrics Under {shift_label}', 
                      fontsize=14, fontweight='bold')
         
@@ -209,14 +246,19 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
 
 def plot_mitigation_comparison(results, alphas, gammas, betas,
                                save_dir='outputs'):
-    """Compare baseline, KDE reweighting, and TPR threshold adjustment."""
+    """Compare mitigations and the diagnostic target-retraining reference."""
+    shift_types = ('group_shift', 'covariate_shift', 'label_shift')
     required = ('kde_reweighting', 'threshold_tpr')
     if any(
-        _metrics_for_method(results['group_shift'], method) is None
+        not _method_available(results, shift_types, method)
         for method in required
     ):
         print('Skipping mitigation comparison: methods are absent from log.')
         return
+
+    include_target_retraining = _method_available(
+        results, shift_types, 'target_retrained'
+    )
 
     os.makedirs(save_dir, exist_ok=True)
     shifts = [
@@ -241,6 +283,10 @@ def plot_mitigation_comparison(results, alphas, gammas, betas,
                 results[shift_type], 'threshold_tpr'
             ),
         }
+        if include_target_retraining:
+            methods['Target retraining (diagnostic)'] = _metrics_for_method(
+                results[shift_type], 'target_retrained'
+            )
         for col, (metric, metric_label) in enumerate(metrics):
             ax = axes[row, col]
             for label, method_results in methods.items():
@@ -268,6 +314,10 @@ def plot_mitigation_comparison(results, alphas, gammas, betas,
                 results[shift_type], 'threshold_tpr'
             ),
         }
+        if include_target_retraining:
+            alternatives['Target retraining - Baseline'] = _metrics_for_method(
+                results[shift_type], 'target_retrained'
+            )
         for col, (metric, metric_label) in enumerate(metrics):
             ax = axes[row, col]
             ax.axhline(0, color='black', linewidth=1)
@@ -377,7 +427,7 @@ def main(log_file=None):
     fig_dir = 'outputs/figures'
     os.makedirs(fig_dir, exist_ok=True)
     
-    # Plot combined phase diagrams (3x3 grid)
+    # Plot combined phase diagrams (3x4 for schema-v3 logs)
     print("\nGenerating combined phase diagrams...")
     plot_phase_diagrams(results, alphas, gammas, betas, save_dir=fig_dir)
     
