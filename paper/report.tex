@@ -17,6 +17,7 @@
 % === 标题、作者 ===
 \title{When Fairness Metrics Disagree Under Shift: A Stylized Case Study of a Medical Follow-up Risk Score under Hospital Deployment Shift}
 \author{Meixuan Chen \\ The Edward S. Rogers Sr. Department of Electrical \& Computer Engineering \\ University of Toronto \\meixan.chen@mail.utoronto.ca}
+\date{}
 \maketitle
 
 
@@ -32,119 +33,63 @@ Fairness under non-stationary environments has been studied in several recent wo
 \subsection{Distribution shift mechanisms}
 \label{sec:shift_mechanisms}
 
-We consider three families of controlled distribution shift implemented via \texttt{generate\_data}: (i) group-conditioned base-rate shift, (ii) pure group-specific covariate shift, and (iii) group-specific label noise shift. For label-noise experiments, the simulator retains both the clean synthetic outcome $Y^*$ and the recorded outcome $\tilde{Y}$. The source classifier is held fixed for the diagnostic baseline, while mitigation experiments additionally evaluate reweighted training, post-hoc thresholding, and target-distribution retraining. Full mathematical definitions of each shift mechanism are deferred to Appendix \ref{app:a}.
+We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The diagnostic baseline holds the source classifier fixed; label-noise experiments retain both the clean synthetic outcome $Y^*$ and recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
 
 \subsection{Fairness and calibration metrics}
 \label{sec:metrics}
 
-We report standard fairness quantities via \texttt{fairlearn.metrics}: demographic parity difference (absolute difference in positive prediction rates), equalized odds difference (worst-case TPR/FPR discrepancy), and the true-positive-rate gap (equal-opportunity violation). We also track global and group-wise expected calibration error (ECE) and the ECE gap to capture calibration disparities. Formal definitions of all metrics are provided in Appendix \ref{app:b}.
+We report demographic parity difference (DP), equalized odds difference (EO), the true-positive-rate gap, balanced accuracy, and global/group-wise expected calibration error (ECE). Formal definitions are provided in Appendix~\ref{app:b}.
 
 \subsection{Mitigation strategies under different target-data access regimes}
 \label{sec:mitigations}
 
-Rather than treating the following interventions as interchangeable fixes, we explicitly distinguish them by their target-domain \emph{information requirements} and the shift types for which they are theoretically justified.
-
-\begin{itemize}
-    \item \textbf{KDE Importance Reweighting (unsupervised, covariate-shift specific).} 
-    This method requires only unlabeled target covariates $X_{\text{target}}$. It estimates the density ratio $w(x)=\hat{p}_{\text{target}}(x)/\hat{p}_{\text{train}}(x)$ via kernel density estimation and reweights the logistic loss accordingly. 
-    \emph{Crucially, this intervention is theoretically justified only under pure covariate shift}, where $P(Y|X)$ remains invariant. Under label-noise or prior shifts, $P(Y|X)$ changes, and density-ratio reweighting cannot, in general, correct the resulting fairness distortion. We include it precisely to demonstrate this boundary.
-
-    \item \textbf{Post-hoc Threshold Adjustment (labeled target calibration, equal-opportunity targeting).} 
-    This method requires target calibration examples, recorded outcomes $\tilde{Y}$, and group labels $S$. It selects group-specific thresholds to raise the lower TPR toward the higher group's baseline. It does not require retraining the model, but it also does not enforce full equalized odds and can inadvertently increase the FPR gap, as we will show.
-
-    \item \textbf{Target-Distribution Retraining (fully supervised reference).} 
-    This method requires a labeled target training set $(X,\tilde{Y})$. It retrains the same logistic model on shifted data and shows what standard target-domain ERM attains when target labels are available. Group labels $S$ are needed to evaluate group fairness, but the present ERM training objective does not use them. Target retraining is not a fairness-specific algorithm or a guaranteed upper bound; it is a supervised reference for the other access regimes.
-\end{itemize}
-
-Detailed implementation of each strategy is given in Appendix \ref{app:c}.
+The interventions represent distinct target-data regimes rather than interchangeable fixes: KDE reweighting uses unlabeled target covariates and is justified only under pure covariate shift; equal-opportunity thresholding uses a labeled target calibration set $(X,\tilde{Y},S)$; and target ERM uses labeled target training data $(X,\tilde{Y})$, with $S$ needed only for fairness evaluation. Appendix~\ref{app:c} gives full details.
 
 \section{Experimental Setup}
 
 \subsection{Shift parameter grid}
 \label{sec:setup}
 
-We sweep over the following grids:
-\begin{itemize}
-    \item Group-conditioned base-rate shift: \(\alpha \in [0, 1]\) with 11 steps.
-    \item Covariate shift: \(\gamma \in [1, 4]\) with 10 steps.
-    \item Asymmetric label noise: \(\beta \in [0, 0.3]\) with 10 steps.
-    \item Joint danger-zone grid: all $11\times10$ combinations of $(\alpha,\beta)$, evaluated over five seeds.
-\end{itemize}
-
-Implementation details (sample sizes, classifier hyperparameters, ECE binning, and random seed) are reported in Appendix \ref{app:d}.
+We use 11 values of $\alpha\in[0,1]$, 10 values of $\gamma\in[1,4]$, and 10 values of $\beta\in[0,0.3]$. The primary danger-zone analysis evaluates all $11\times10$ $(\alpha,\beta)$ combinations over five seeds; Appendix~\ref{app:d} reports implementation details.
 
 \section{Results}
 
 \subsection{Key empirical findings}
 \label{sec:results}
 
-Across all three shift families, we observe that demographic parity, error-based metrics, and calibration can move in markedly different directions. Our main results are summarized below. %Baseline phase diagrams, mitigation comparisons, and the target-retraining supplementary figure are saved in \texttt{outputs/figures/}.
+\textbf{Diagnosis (RQ1--RQ2).} Under base-rate shift, DP rises from 0.01 to 0.26 while the TPR gap stays between 0.03 and 0.06. Under pure covariate shift, DP reaches 0.156 and EO/TPR gap reach 0.233, while ECE gap remains below 0.008. Under asymmetric label noise, DP stays at 0.012 while the recorded-label TPR gap rises from 0.032 to 0.176 even though predictions and clean outcomes do not change, exposing measurement distortion.
 
-\subsubsection{Diagnosis (RQ1 \& RQ2):}
-\begin{itemize}
-    \item Under \textbf{group-conditioned base-rate shift}, DP increases from 0.01 to 0.26 as \(\alpha\) goes from 0 to 1, while the TPR gap remains between approximately 0.03 and 0.06. The two metric families therefore react very differently to the same prevalence change.
-
-    \item Under \textbf{pure covariate shift}, DP grows from 0.012 to 0.156, while EO and the TPR gap reach 0.233 at \(\gamma=4\). The ECE gap remains below 0.008 because the conditional label mechanism is unchanged and correctly represented by the logistic model. Fairness gaps can therefore grow even when target-domain calibration and balanced accuracy remain strong.
-
-    \item Under \textbf{asymmetric label noise}, DP stays flat at 0.012 even as the TPR gap computed using recorded labels $\tilde{Y}$ grows from 0.032 to 0.176. Because predictions and clean outcomes do not change with $\beta$, this is primarily a measurement distortion: a dashboard using recorded outcomes can report sharply worsening equal opportunity even when the corresponding clean-outcome TPR gap remains stable.
-\end{itemize}
-
-\subsubsection{Mitigation (RQ3):}
-\begin{itemize}
-    \item \textbf{KDE Reweighting:} Under the matched pure covariate shift, the ESS fraction remains between 0.781 and 0.916, but the weighted and frozen curves are nearly identical. This is expected here: $P(Y\mid X,S)$ is invariant and correctly represented by the logistic model, so source and target risk minimizers nearly coincide. Importance weighting remains theoretically appropriate for target-risk correction, but it does not erase group fairness gaps caused by the changed target covariate distribution. Results under prior shift and label noise are retained only as negative controls in the appendix, since the covariate-shift assumption does not hold there.
-
-    \item \textbf{Threshold Adjustment:} Under pure covariate shift it reduces the maximum TPR gap from 0.233 to 0.046, yet the maximum EO difference rises from 0.233 to 0.430 because the FPR gap grows. At $\gamma=4$, balanced accuracy falls from 0.894 for the frozen model to 0.841 after thresholding. Under label noise it lowers the maximum recorded-label TPR gap from 0.176 to 0.030 but raises DP from approximately 0.012 to as much as 0.178.
-
-    \item \textbf{Target Retraining:} Under severe pure covariate shift ($\gamma=4$), target ERM closely matches the frozen model: balanced accuracy is 0.895 versus 0.894, and the TPR gap is 0.221 versus 0.233. This supervised reference confirms that retraining the same correctly specified model offers little additional benefit. Under label noise, retraining keeps DP low but only modestly changes EO.
-\end{itemize}
-
-Figure~\ref{fig:access_regimes} compares these methods only under the shift for which KDE weighting is theoretically matched and labels every curve by its target-data requirement.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.98\textwidth]{figures/mitigation_access_regimes_covariate.png}
-    \caption{Mitigation comparison under pure covariate shift, organized by target-data access. KDE uses only unlabeled target covariates; equal-opportunity thresholding uses recorded target outcomes and group labels on a calibration set; target ERM uses labeled target training data. The methods are therefore access regimes rather than interchangeable fixes.}
-    \label{fig:access_regimes}
-\end{figure}
+\textbf{Mitigation (RQ3).} Under matched pure covariate shift, KDE nearly coincides with the correctly specified frozen model. Equal-opportunity thresholding lowers maximum TPR gap from 0.233 to 0.046 but raises maximum EO to 0.430 and lowers balanced accuracy at $\gamma=4$ from 0.894 to 0.841. Target ERM remains close to the frozen model (TPR gap 0.221 versus 0.233). Figure~\ref{fig:access_regimes} in Appendix~\ref{app:figs} compares these access regimes; KDE results under other shifts are negative controls.
 
 \subsection{Operational definition of the danger zone and phase-diagram analysis}
 
-For each cell of the joint grid, changes are defined relative to the no-shift configuration:
+Relative to the no-shift cell, define
 \[
-\Delta_D(\alpha,\beta)=\mathrm{DP}(\alpha,\beta)-\mathrm{DP}(0,0),
+\Delta_D=\mathrm{DP}(\alpha,\beta)-\mathrm{DP}(0,0),\qquad
+\Delta_T=\mathrm{TPRGap}_{\tilde{Y}}(\alpha,\beta)-\mathrm{TPRGap}_{\tilde{Y}}(0,0).
 \]
-\[
-\Delta_T(\alpha,\beta)=\mathrm{TPRGap}_{\tilde{Y}}(\alpha,\beta)-\mathrm{TPRGap}_{\tilde{Y}}(0,0).
-\]
-We define an operational \emph{metric-monitoring danger zone} by
+The operational \emph{metric-monitoring danger zone} is
 \[
 \Delta_T\ge 0.05
 \quad\land\quad
 \left[\Delta_D\le0.02\ \lor\ \Delta_T\ge2\max(\Delta_D,0)\right].
 \]
-Thus, recorded-label TPR disparity must deteriorate by at least five percentage points while DP either remains stable within two percentage points or changes at less than half the TPR-gap rate. These thresholds are fixed before inspecting individual cells. A cell is reported as dangerous when the condition holds in at least three of five seeds, preventing small sign changes from determining the boundary.
+Thresholds are pre-specified; a cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively. Thus, DP can miss recorded-label disparity, while recorded outcomes can themselves misrepresent clean-outcome fairness.
 
-Our main analysis sweeps the joint space of prior shift ($\alpha$) and label-noise severity ($\beta$). Figure~\ref{fig:danger_zone}(a) shows 20 dangerous cells out of 110. They emerge from $\beta\approx0.17$ onward and concentrate at lower $\alpha$, where label noise changes the recorded-label TPR gap while DP remains comparatively insensitive. At larger $\alpha$, DP itself rises substantially, so the discrepancy is no longer hidden from a DP-only monitor.
-
-Because the simulator retains clean outcomes, Figure~\ref{fig:danger_zone}(b) separately compares fairness measured using $\tilde{Y}$ with fairness measured using $Y^*$. In 78 of 110 cells, the recorded and clean TPR gaps differ by at least five percentage points in a majority of seeds. The maximum recorded-label TPR-gap increase is 0.338, whereas the maximum clean-outcome increase is only 0.021. This distinction prevents a recorded-label monitoring failure from being over-interpreted as direct evidence of unequal latent clinical need.
-
-\begin{figure}[htbp]
+\begin{figure}[!t]
     \centering
     \includegraphics[width=1.0\textwidth]{figures/danger_zone_phase_diagram.png}
-    \caption{Joint prior-shift and label-noise phase diagram. Panel (a) colors the change in TPR gap computed using recorded outcomes $\tilde{Y}$ and hatches cells satisfying the pre-specified danger-zone definition in at least three of five seeds. Panel (b) shows the difference between recorded-label and clean-outcome TPR gaps; outlined cells differ by at least five percentage points in at least three seeds.}
+    \caption{Primary joint prior-shift and label-noise phase diagram. Panel (a) shows the change in the recorded-label TPR gap and hatches cells satisfying the danger-zone definition in at least three of five seeds. Panel (b) shows the difference between recorded-label and clean-outcome TPR gaps; outlined cells differ by at least five percentage points in at least three seeds.}
     \label{fig:danger_zone}
 \end{figure}
 
-We emphasize regions where demographic parity remains stable or changes slowly while error-based metrics such as EO and the TPR gap worsen. The mitigation plots also show the converse: explicitly reducing the TPR gap can increase DP or the FPR-driven EO difference. Thus, a favorable movement in one fairness quantity need not correspond to uniformly fairer behavior.
+\noindent\textbf{Interpretation.} The danger zone first appears at $\beta=0.167$ for $\alpha\le0.1$ and expands to $\alpha\le0.4$ as recording noise increases. In this band, DP remains close enough to baseline to look reassuring even though the recorded-label TPR gap has materially worsened. At larger $\alpha$, changes in DP make the directional rule harder to satisfy, but this does not imply agreement between outcome definitions: the clean--recorded TPR-gap discrepancy spans 78 cells, far beyond the 20-cell danger zone. The two panels therefore diagnose distinct monitoring failures---a seemingly stable selection-rate metric and an error-rate conclusion that depends on whether recorded or clean outcomes are treated as ground truth.
 
 \section{Conclusion and Future Work}
 
-Our simulations reveal several patterns. A stable or comparatively favorable demographic-parity value can mask large changes in error-based fairness; asymmetric corruption of recorded outcomes is the clearest example. In practice, a hospital dashboard that monitors only demographic parity can miss changes in recorded-label error disparities, while a dashboard that treats recorded outcomes as ground truth can also mistake documentation distortion for a change in latent clinical need. A deployed follow-up score should therefore track DP, TPR gaps, calibration, and data-quality indicators side by side, with each metric tied to the outcome definition used to compute it. Different metrics can disagree not only in level but in trend as the environment drifts, so the choice of metric should be guided by the specific equity concern and the reliability of the available outcome data.
-%We discuss the implications of these findings for interpreting fairness metrics in non-stationary hospital environments, monitoring deployed risk scores under population drift, and designing robustness checks for fairness evaluations before cross-hospital deployment.
+Stable DP can mask recorded-label error disparities, yet treating recorded outcomes as ground truth can also mistake documentation distortion for latent clinical harm. Deployment monitoring should therefore track DP, TPR gaps, calibration, and data quality with each metric tied to its outcome definition. Mitigations must likewise be interpreted by their target-data requirements and valid shift assumptions, not as interchangeable fixes. Future work should extend the danger-zone analysis to richer feature spaces and causal outcome definitions.
 
-We presented a synthetic simulation framework showing that stable demographic-parity values can mask changes in recorded-label error-based fairness. The pre-specified danger zone and the clean-versus-recorded comparison turn this qualitative concern into a reproducible diagnostic. Different target-data access regimes dictate which mitigation strategies are viable: density-ratio weighting requires only unlabeled target covariates and is justified under pure covariate shift; equal-opportunity thresholding requires labeled target calibration outcomes and group labels; and target ERM requires labeled target training data. These findings caution against over-relying on any single statistic, outcome proxy, or intervention when deploying models across hospitals. Future work includes extending the danger-zone characterization to more realistic feature spaces, multi-class settings, and causal counterfactual definitions.
-
-
+\clearpage
 \begin{thebibliography}{99}
 
 \bibitem{asiaee2026fairness}
@@ -281,6 +226,8 @@ To evaluate whether fairness distortion can be detected or corrected, we impleme
 
 This appendix provides the complete experimental implementation details complementing Section~\ref{sec:setup}.
 
+\textbf{Code and reproducibility.} Source code, experiment configurations, and plotting scripts are available at \url{https://github.com/njzfjiang/csc-2555-project}.
+
 \begin{itemize}
     \item Sample size: source training, shifted evaluation, and target-retraining datasets each use \(N=5000\). KDE adaptation and threshold calibration each use independent samples of size 1000.
     \item Classifier: Logistic regression with \texttt{max\_iter=1000} and default L2 regularization (\texttt{C=1.0}).
@@ -293,7 +240,14 @@ This appendix provides the complete experimental implementation details compleme
 
 This appendix provides supporting visualizations for the results summarized in Section~\ref{sec:results}.
 
-\begin{figure}[h]
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.98\textwidth]{figures/mitigation_access_regimes_covariate.png}
+    \caption{Mitigation comparison under pure covariate shift, organized by target-data access. KDE uses only unlabeled target covariates; equal-opportunity thresholding uses recorded target outcomes and group labels on a calibration set; target ERM uses labeled target training data. The methods are therefore access regimes rather than interchangeable fixes.}
+    \label{fig:access_regimes}
+\end{figure}
+
+\begin{figure}[p]
     \centering
     \includegraphics[width=1.0\textwidth]{figures/phase_diagrams.png}
     \caption{Metrics versus severity for the three one-dimensional extensions. Group-conditioned base-rate shift raises DP while the TPR gap changes modestly. Pure group-specific covariate shift raises DP and error-based gaps while the ECE gap remains small. Under asymmetric label noise, DP remains flat while the TPR gap computed from recorded labels rises sharply.}
@@ -302,7 +256,7 @@ This appendix provides supporting visualizations for the results summarized in S
 
 
 
-\begin{figure}[h]
+\begin{figure}[p]
     \centering
     \includegraphics[width=1.0\textwidth]{figures/mitigation_comparison.png}
     \caption{Supplementary comparison across all shifts. KDE results outside pure covariate shift are negative controls rather than matched corrections. Threshold adjustment often reduces the TPR gap while increasing DP, FPR-driven EO, or both. Target retraining is a supervised reference, not a fairness-specific mitigation.}
