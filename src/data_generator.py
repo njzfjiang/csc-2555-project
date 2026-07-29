@@ -84,7 +84,8 @@ def generate_data(num_samples=1000,
                   flip_noise_a=0.0,      # flip noise for group A (β) [0, 1]
                   seed=42,
                   use_cache=False,
-                  cache_dir='data/cached'):
+                  cache_dir='data/cached',
+                  return_clean_labels=False):
     """
     Generate synthetic data with controlled shifts.
     
@@ -94,9 +95,13 @@ def generate_data(num_samples=1000,
         Whether to use cached data if available. Default: False
     cache_dir : str, optional
         Directory for caching. Default: 'data/cached'
+    return_clean_labels : bool, optional
+        If True, append the pre-noise labels to the returned tuple. This is
+        useful when comparing fairness measured using recorded labels with
+        fairness relative to the latent synthetic outcome.
     """
     # Try to load from cache if enabled
-    if use_cache:
+    if use_cache and not return_clean_labels:
         cached_data = load_cached_data(
             cache_dir=cache_dir,
             num_samples=num_samples,
@@ -118,6 +123,7 @@ def generate_data(num_samples=1000,
     s = np.random.choice([0, 1], size=num_samples, p=[prior_a, 1-prior_a])
     base_rates = np.where(s == 0, base_rate_a, base_rate_b)
     y = np.random.binomial(1, base_rates)
+    y_clean = y.copy()
     
     # 2. generate X (covariate shift: scaled by group s) 
     # with the first feature correlated with y and s, and the rest as noise
@@ -142,7 +148,7 @@ def generate_data(num_samples=1000,
     y[mask_b] = np.where(flip_b, 1, y[mask_b])
     
     # Save to cache if enabled
-    if use_cache:
+    if use_cache and not return_clean_labels:
         save_cached_data(
             X, y, s,
             cache_dir=cache_dir,
@@ -157,5 +163,7 @@ def generate_data(num_samples=1000,
             seed=seed
         )
     
+    if return_clean_labels:
+        return X, y, s, y_clean
     return X, y, s
 

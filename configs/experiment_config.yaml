@@ -49,6 +49,16 @@ model:
 metrics:
   ece_bins: 10               # ECE（Expected Calibration Error）bins
 
+# --- Joint Prior/Label-Noise Danger-Zone Analysis ---
+danger_zone:
+  min_tpr_increase: 0.05     # Material worsening: 5 percentage points
+  max_dp_increase: 0.02      # DP may appear stable within 2 percentage points
+  relative_multiplier: 2.0   # Or TPR degradation is at least 2x DP degradation
+  min_label_disagreement: 0.05 # Recorded vs. clean TPR gaps differ by 5 points
+  num_seeds: 5
+  seed_stride: 1000
+  consensus_fraction: 0.6    # Mark cells dangerous in at least 3 of 5 seeds
+
 # --- KDE Importance Reweighting ---
 reweighting:
   bandwidth: 0.3

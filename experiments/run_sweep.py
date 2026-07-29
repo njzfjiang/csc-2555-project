@@ -11,7 +11,12 @@ from sklearn.metrics import balanced_accuracy_score
 
 from src.utils import load_config
 from src.data_generator import generate_data
-from src.shifts import group_shift, covariate_shift, label_shift
+from src.shifts import (
+    group_shift,
+    covariate_shift,
+    label_shift,
+    joint_prior_label_shift,
+)
 from src.reweighting import compute_importance_weights_kde, effective_sample_size
 from src.adjust_threshold import (
     adjust_threshold_equal_opportunity,
@@ -85,6 +90,182 @@ def evaluate_shift(X, y, s, y_pred, y_proba, ece_bins=10):
         'tpr_gap': np.abs(tpr_gap),
         'ece_gap': ece_gap,
         'balanced_accuracy': balanced_accuracy_score(y, y_pred),
+    }
+
+
+def classify_danger_zone(
+    delta_dp,
+    delta_tpr,
+    min_tpr_increase=0.05,
+    max_dp_increase=0.02,
+    relative_multiplier=2.0,
+):
+    """Classify materially harmful disagreement between TPR gap and DP.
+
+    A configuration is dangerous only when the TPR gap worsens by a material
+    amount. DP must either remain approximately stable or the TPR degradation
+    must be at least ``relative_multiplier`` times the nonnegative DP change.
+    """
+    delta_dp = np.asarray(delta_dp, dtype=float)
+    delta_tpr = np.asarray(delta_tpr, dtype=float)
+    if delta_dp.shape != delta_tpr.shape:
+        raise ValueError("delta_dp and delta_tpr must have matching shapes")
+    if min_tpr_increase < 0 or max_dp_increase < 0:
+        raise ValueError("danger-zone tolerances must be nonnegative")
+    if relative_multiplier <= 0:
+        raise ValueError("relative_multiplier must be positive")
+
+    material_tpr_harm = delta_tpr >= min_tpr_increase
+    dp_appears_stable = delta_dp <= max_dp_increase
+    tpr_outpaces_dp = (
+        delta_tpr
+        >= relative_multiplier * np.maximum(delta_dp, 0.0)
+    )
+    return material_tpr_harm & (dp_appears_stable | tpr_outpaces_dp)
+
+
+def generate_joint_danger_zone_data(config, seed=42):
+    """Evaluate the joint alpha-beta grid using clean and recorded labels."""
+    group_cfg = config['shifts']['group_shift']
+    label_cfg = config['shifts']['label_shift']
+    data_cfg = config['data']
+    model_cfg = config.get('model', {})
+    danger_cfg = config.get('danger_zone', {})
+
+    alphas = np.linspace(
+        group_cfg['severity_min'],
+        group_cfg['severity_max'],
+        int(group_cfg['num_steps']),
+    )
+    betas = np.linspace(
+        label_cfg['severity_min'],
+        label_cfg['severity_max'],
+        int(label_cfg['num_steps']),
+    )
+    num_seeds = int(danger_cfg.get('num_seeds', 5))
+    if num_seeds < 1:
+        raise ValueError("danger_zone.num_seeds must be at least 1")
+    seed_stride = int(danger_cfg.get('seed_stride', 1000))
+    seed_values = [seed + index * seed_stride for index in range(num_seeds)]
+
+    shape = (num_seeds, len(betas), len(alphas))
+    dp = np.zeros(shape, dtype=float)
+    tpr_clean = np.zeros(shape, dtype=float)
+    tpr_observed = np.zeros(shape, dtype=float)
+
+    for seed_index, repetition_seed in enumerate(seed_values):
+        X_train, y_train, _ = generate_data(
+            num_samples=data_cfg['num_samples'],
+            num_features=data_cfg.get('num_features', 2),
+            prior_a=data_cfg.get('prior_a', 0.5),
+            base_rate_a=data_cfg.get('base_rate_a', 0.3),
+            base_rate_b=data_cfg.get('base_rate_b', 0.3),
+            seed=repetition_seed,
+        )
+        for beta_index, beta in enumerate(betas):
+            for alpha_index, alpha in enumerate(alphas):
+                X_test, y_observed, y_clean, s_test = joint_prior_label_shift(
+                    alpha=alpha,
+                    beta=beta,
+                    seed=repetition_seed,
+                    num_samples=data_cfg['num_samples'],
+                    num_features=data_cfg.get('num_features', 2),
+                    prior_a=data_cfg.get('prior_a', 0.5),
+                    base_rate=data_cfg.get('base_rate_a', 0.3),
+                    delta=group_cfg.get('delta', 0.2),
+                )
+                y_pred, _ = train_classifier(
+                    X_train,
+                    y_train,
+                    X_test,
+                    seed=repetition_seed,
+                    model_config=model_cfg,
+                )
+                dp[seed_index, beta_index, alpha_index] = np.abs(
+                    demographic_parity_difference(
+                        y_clean, y_pred, s_test
+                    )
+                )
+                tpr_clean[seed_index, beta_index, alpha_index] = np.abs(
+                    true_positive_rate_difference(
+                        y_clean, y_pred, s_test
+                    )
+                )
+                tpr_observed[seed_index, beta_index, alpha_index] = np.abs(
+                    true_positive_rate_difference(
+                        y_observed, y_pred, s_test
+                    )
+                )
+
+    delta_dp = dp - dp[:, :1, :1]
+    delta_tpr_clean = tpr_clean - tpr_clean[:, :1, :1]
+    delta_tpr_observed = tpr_observed - tpr_observed[:, :1, :1]
+
+    min_tpr_increase = float(danger_cfg.get('min_tpr_increase', 0.05))
+    max_dp_increase = float(danger_cfg.get('max_dp_increase', 0.02))
+    relative_multiplier = float(
+        danger_cfg.get('relative_multiplier', 2.0)
+    )
+    danger_by_seed = classify_danger_zone(
+        delta_dp,
+        delta_tpr_observed,
+        min_tpr_increase=min_tpr_increase,
+        max_dp_increase=max_dp_increase,
+        relative_multiplier=relative_multiplier,
+    )
+    danger_probability = danger_by_seed.mean(axis=0)
+    min_label_disagreement = float(
+        danger_cfg.get('min_label_disagreement', 0.05)
+    )
+    if min_label_disagreement < 0:
+        raise ValueError(
+            "danger_zone.min_label_disagreement must be nonnegative"
+        )
+    label_disagreement_by_seed = (
+        np.abs(tpr_observed - tpr_clean) >= min_label_disagreement
+    )
+    label_disagreement_probability = label_disagreement_by_seed.mean(axis=0)
+    consensus_fraction = float(danger_cfg.get('consensus_fraction', 0.6))
+    if not 0 < consensus_fraction <= 1:
+        raise ValueError("danger_zone.consensus_fraction must be in (0, 1]")
+
+    metric_samples = {
+        'dp': dp,
+        'tpr_gap_clean': tpr_clean,
+        'tpr_gap_observed': tpr_observed,
+        'delta_dp': delta_dp,
+        'delta_tpr_gap_clean': delta_tpr_clean,
+        'delta_tpr_gap_observed': delta_tpr_observed,
+        'clean_minus_observed_tpr_gap': tpr_clean - tpr_observed,
+    }
+    return {
+        'alphas': alphas,
+        'betas': betas,
+        'seeds': seed_values,
+        'definition': {
+            'reference_alpha': 0.0,
+            'reference_beta': 0.0,
+            'min_tpr_increase': min_tpr_increase,
+            'max_dp_increase': max_dp_increase,
+            'relative_multiplier': relative_multiplier,
+            'min_label_disagreement': min_label_disagreement,
+            'consensus_fraction': consensus_fraction,
+            'tpr_label': 'recorded',
+        },
+        'metrics': {
+            key: values.mean(axis=0)
+            for key, values in metric_samples.items()
+        },
+        'metric_std': {
+            key: values.std(axis=0)
+            for key, values in metric_samples.items()
+        },
+        'danger_probability': danger_probability,
+        'danger_mask': danger_probability >= consensus_fraction,
+        'label_disagreement_probability': label_disagreement_probability,
+        'label_disagreement_mask': (
+            label_disagreement_probability >= consensus_fraction
+        ),
     }
 
 
@@ -369,6 +550,12 @@ def generate_phase_diagram_data(config, seed=42):
             X_train, y_train, seed, ece_bins
         )
     print(" done")
+
+    print("  Joint prior/label-noise danger zone...", end='', flush=True)
+    results['joint_prior_label_shift'] = generate_joint_danger_zone_data(
+        config, seed=seed
+    )
+    print(" done")
     
     return results, alphas, gammas, betas
 
@@ -380,6 +567,8 @@ def _json_ready(value):
         return [_json_ready(item) for item in value]
     if isinstance(value, (np.floating, np.integer)):
         return value.item()
+    if isinstance(value, np.bool_):
+        return bool(value)
     return value
 
 
@@ -404,7 +593,7 @@ def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
     
     # Prepare data for JSON serialization
     output_data = {
-        'schema_version': 3,
+        'schema_version': 4,
         'timestamp': timestamp,
         'alphas': alphas.tolist() if isinstance(alphas, np.ndarray) else list(alphas),
         'gammas': gammas.tolist() if isinstance(gammas, np.ndarray) else list(gammas),
@@ -412,9 +601,12 @@ def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
         'results': _json_ready(results),
     }
     
-    # Save to JSON
-    with open(log_file, 'w') as f:
+    # Write atomically so an interrupted or invalid serialization never becomes
+    # the newest cache file consumed by the plotting script.
+    temporary_file = f'{log_file}.tmp'
+    with open(temporary_file, 'w') as f:
         json.dump(output_data, f, indent=2)
+    os.replace(temporary_file, log_file)
     
     print(f"Results saved to {log_file}")
     return log_file
@@ -451,6 +643,14 @@ def run_sweep(config, seed=42):
             )
         ess = results[shift_type]['diagnostics']['ess_fraction']
         print(f"  ESS fraction: [{min(ess):.3f}, {max(ess):.3f}]\n")
+
+    joint_results = results['joint_prior_label_shift']
+    danger_count = int(np.asarray(joint_results['danger_mask']).sum())
+    danger_total = int(np.asarray(joint_results['danger_mask']).size)
+    print(
+        "JOINT PRIOR/LABEL-NOISE DANGER ZONE:\n"
+        f"  dangerous cells: {danger_count}/{danger_total}\n"
+    )
     
     print("\n" + "="*60)
     print("SAVING RESULTS")

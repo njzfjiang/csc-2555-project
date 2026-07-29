@@ -4,6 +4,7 @@ import seaborn as sns
 import os
 import sys
 from glob import glob
+from matplotlib.patches import Patch, Rectangle
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -244,6 +245,203 @@ def plot_separate_heatmaps(results, alphas, gammas, betas, save_dir='outputs'):
         plt.close()
 
 
+def plot_danger_zone(results, save_dir='outputs'):
+    """Plot metric disagreement and recorded-vs-clean label disagreement."""
+    joint = results.get('joint_prior_label_shift')
+    if joint is None:
+        print('Skipping danger-zone plot: joint sweep is absent from log.')
+        return
+
+    os.makedirs(save_dir, exist_ok=True)
+    alphas = np.asarray(joint['alphas'], dtype=float)
+    betas = np.asarray(joint['betas'], dtype=float)
+    delta_tpr = np.asarray(
+        joint['metrics']['delta_tpr_gap_observed'], dtype=float
+    )
+    danger_mask = np.asarray(joint['danger_mask'], dtype=bool)
+    recorded_minus_clean = -np.asarray(
+        joint['metrics']['clean_minus_observed_tpr_gap'], dtype=float
+    )
+    label_disagreement_mask = np.asarray(
+        joint['label_disagreement_mask'], dtype=bool
+    )
+    definition = joint['definition']
+
+    color_limit = max(float(np.max(np.abs(delta_tpr))), 0.01)
+    label_color_limit = max(
+        float(np.max(np.abs(recorded_minus_clean))), 0.01
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+    ax = axes[0]
+    sns.heatmap(
+        delta_tpr,
+        ax=ax,
+        cmap='RdBu_r',
+        center=0,
+        vmin=-color_limit,
+        vmax=color_limit,
+        xticklabels=[f'{value:.2f}' for value in alphas],
+        yticklabels=[f'{value:.2f}' for value in betas],
+        cbar_kws={
+            'label': r'$\Delta$ TPR gap using recorded $\tilde{Y}$'
+                     ' (relative to no shift)'
+        },
+    )
+    for beta_index, alpha_index in np.argwhere(danger_mask):
+        ax.add_patch(
+            Rectangle(
+                (alpha_index, beta_index),
+                1,
+                1,
+                fill=False,
+                hatch='///',
+                edgecolor='black',
+                linewidth=0.4,
+            )
+        )
+
+    consensus = 100 * float(definition['consensus_fraction'])
+    ax.legend(
+        handles=[
+            Patch(
+                facecolor='white',
+                edgecolor='black',
+                hatch='///',
+                label=f'Danger zone (at least {consensus:.0f}% of seeds)',
+            )
+        ],
+        loc='upper left',
+        framealpha=0.95,
+    )
+    ax.set_xlabel(r'Group-conditioned prior-shift severity $\alpha$',
+                  fontweight='bold')
+    ax.set_ylabel(r'Asymmetric label-noise severity $\beta$',
+                  fontweight='bold')
+    ax.set_title(
+        '(a) Metric-monitoring danger zone',
+        fontweight='bold',
+    )
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+    ax.invert_yaxis()
+
+    ax = axes[1]
+    sns.heatmap(
+        recorded_minus_clean,
+        ax=ax,
+        cmap='PuOr_r',
+        center=0,
+        vmin=-label_color_limit,
+        vmax=label_color_limit,
+        xticklabels=[f'{value:.2f}' for value in alphas],
+        yticklabels=[f'{value:.2f}' for value in betas],
+        cbar_kws={
+            'label': r'TPR gap($\tilde{Y}$) $-$ TPR gap($Y^*$)'
+        },
+    )
+    for beta_index, alpha_index in np.argwhere(label_disagreement_mask):
+        ax.add_patch(
+            Rectangle(
+                (alpha_index, beta_index),
+                1,
+                1,
+                fill=False,
+                edgecolor='black',
+                linewidth=1.0,
+            )
+        )
+    ax.legend(
+        handles=[
+            Patch(
+                facecolor='white',
+                edgecolor='black',
+                label=(
+                    'Outlined: recorded/clean TPR gaps differ by at least '
+                    f"{100 * float(definition['min_label_disagreement']):.0f} pp"
+                ),
+            )
+        ],
+        loc='upper left',
+        framealpha=0.95,
+    )
+    ax.set_xlabel(r'Group-conditioned prior-shift severity $\alpha$',
+                  fontweight='bold')
+    ax.set_ylabel(r'Asymmetric label-noise severity $\beta$',
+                  fontweight='bold')
+    ax.set_title('(b) Recorded-label measurement distortion',
+                 fontweight='bold')
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+    ax.invert_yaxis()
+
+    fig.suptitle(
+        'Joint Prior-Shift and Label-Noise Phase Diagram',
+        fontsize=15,
+        fontweight='bold',
+    )
+    plt.tight_layout(rect=(0, 0, 1, 0.95))
+
+    output_path = os.path.join(save_dir, 'danger_zone_phase_diagram.png')
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Danger-zone phase diagram saved to {output_path}')
+
+
+def plot_target_data_access_comparison(results, gammas, save_dir='outputs'):
+    """Compare target-data access regimes under the matched covariate shift."""
+    shift_type = 'covariate_shift'
+    methods = [
+        ('baseline', 'Frozen source (source labels only)'),
+        ('kde_reweighting', 'KDE (unlabeled target X)'),
+        ('threshold_tpr', 'EO threshold (labeled target Y, S)'),
+        ('target_retrained', 'Target ERM (labeled target X, Y)'),
+    ]
+    if any(
+        _metrics_for_method(results[shift_type], method) is None
+        for method, _ in methods
+    ):
+        print('Skipping access-regime comparison: methods are absent from log.')
+        return
+
+    os.makedirs(save_dir, exist_ok=True)
+    metrics = [
+        ('balanced_accuracy', 'Balanced Accuracy'),
+        ('dp', 'DP Difference'),
+        ('tpr_gap', 'TPR Gap'),
+        ('eo', 'EO Difference'),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(15, 9))
+    for ax, (metric, metric_label) in zip(axes.flat, metrics):
+        for method, label in methods:
+            method_results = _metrics_for_method(
+                results[shift_type], method
+            )
+            ax.plot(
+                gammas,
+                method_results[metric],
+                marker='o',
+                label=label,
+            )
+        ax.set_title(metric_label)
+        ax.set_xlabel(r'Covariate-shift severity $\gamma$')
+        ax.set_ylabel(metric_label)
+        ax.grid(alpha=0.25)
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower center', ncol=2)
+    fig.suptitle(
+        'Mitigation Comparison by Target-Data Access Regime\n'
+        '(Pure Covariate Shift)',
+        fontweight='bold',
+    )
+    plt.tight_layout(rect=(0, 0.1, 1, 0.94))
+    output_path = os.path.join(
+        save_dir, 'mitigation_access_regimes_covariate.png'
+    )
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f'Access-regime comparison saved to {output_path}')
+
+
 def plot_mitigation_comparison(results, alphas, gammas, betas,
                                save_dir='outputs'):
     """Compare mitigations and the diagnostic target-retraining reference."""
@@ -434,6 +632,12 @@ def main(log_file=None):
     # Plot separate heatmaps (cleaner visualization)
     print("Generating separate shift-specific heatmaps...")
     plot_separate_heatmaps(results, alphas, gammas, betas, save_dir=fig_dir)
+
+    print("Generating joint danger-zone phase diagram...")
+    plot_danger_zone(results, save_dir=fig_dir)
+
+    print("Generating target-data access-regime comparison...")
+    plot_target_data_access_comparison(results, gammas, save_dir=fig_dir)
 
     print("Generating mitigation comparisons...")
     plot_mitigation_comparison(

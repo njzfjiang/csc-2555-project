@@ -19,8 +19,8 @@ This repository contains the source code for the CSC 2555 course project (Summer
 - `configs/`
   - `experiment_config.yaml`: main configuration for sweep ranges, metrics, and other hyperparameters.
 - `experiments/`
-  - `run_sweep.py`: evaluates baseline, KDE reweighting, TPR threshold adjustment, and target retraining.
-  - `plot_phase_diagrams.py`: generates phase diagrams, mitigation comparisons, and supplementary plots.
+  - `run_sweep.py`: evaluates baseline and target-data access regimes, plus a five-seed joint prior/label-noise danger-zone grid with clean and recorded labels.
+  - `plot_phase_diagrams.py`: generates the primary 2D danger-zone diagram, the matched covariate-shift access-regime comparison, and supplementary plots.
 - `notebooks/`
   - `figures.ipynb`: notebook for interactive figure tweaking and additional exploratory plots.
 - `data/`
@@ -31,6 +31,7 @@ This repository contains the source code for the CSC 2555 course project (Summer
 - `paper/`
   - `project proposal.pdf`: original project proposal.
   - `draft.md`: working draft of the project report.
+  - `report.tex`: current report source.
 
 ---
 

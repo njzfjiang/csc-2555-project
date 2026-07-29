@@ -7,7 +7,12 @@ from src.reweighting import (
     compute_importance_weights_kde,
     effective_sample_size,
 )
-from src.shifts import covariate_shift, group_shift, label_shift
+from src.shifts import (
+    covariate_shift,
+    group_shift,
+    joint_prior_label_shift,
+    label_shift,
+)
 
 
 class KDEReweightingTests(unittest.TestCase):
@@ -56,6 +61,35 @@ class ShiftConfigurationTests(unittest.TestCase):
         rate_b = y[s == 1].mean()
         self.assertAlmostEqual(float(rate_a), 0.5, delta=0.03)
         self.assertAlmostEqual(float(rate_b), 0.1, delta=0.02)
+
+    def test_pure_covariate_shift_changes_features_without_label_noise(self):
+        X_source, _, s_source = covariate_shift(
+            severity=1.0, num_samples=10000, seed=9
+        )
+        X_target, _, s_target = covariate_shift(
+            severity=3.0, num_samples=10000, seed=9
+        )
+
+        source_scale = X_source[s_source == 0, 0].std()
+        target_scale = X_target[s_target == 0, 0].std()
+        self.assertGreater(float(target_scale), 2.5 * float(source_scale))
+
+    def test_joint_shift_returns_clean_and_recorded_labels(self):
+        X, y_observed, y_clean, s = joint_prior_label_shift(
+            alpha=0.5, beta=0.3, num_samples=10000, seed=10
+        )
+
+        self.assertEqual(X.shape, (10000, 2))
+        self.assertGreater(int(np.sum(y_observed != y_clean)), 0)
+        self.assertGreater(
+            float(y_clean[s == 0].mean()),
+            float(y_clean[s == 1].mean()),
+        )
+
+        _, baseline_observed, baseline_clean, _ = joint_prior_label_shift(
+            alpha=0.0, beta=0.0, num_samples=500, seed=11
+        )
+        np.testing.assert_array_equal(baseline_observed, baseline_clean)
 
 
 if __name__ == '__main__':
