@@ -40,6 +40,10 @@ class DangerZoneTests(unittest.TestCase):
             np.asarray(results['danger_probability']).shape,
             (2, 3),
         )
+        self.assertEqual(
+            np.asarray(results['metric_samples']['delta_dp']).shape,
+            (2, 2, 3),
+        )
         self.assertAlmostEqual(
             float(results['metrics']['delta_dp'][0, 0]), 0.0
         )

@@ -19,14 +19,14 @@ This repository contains the source code for the CSC 2555 course project (Summer
 - `configs/`
   - `experiment_config.yaml`: main configuration for sweep ranges, metrics, and other hyperparameters.
 - `experiments/`
-  - `run_sweep.py`: evaluates baseline and target-data access regimes, plus a five-seed joint prior/label-noise danger-zone grid with clean and recorded labels.
-  - `plot_phase_diagrams.py`: generates the primary 2D danger-zone diagram, the matched covariate-shift access-regime comparison, and supplementary plots.
+  - `run_sweep.py`: evaluates baseline and target-data access regimes over three coupled seeds, plus a five-seed joint prior/label-noise danger-zone grid with clean and recorded labels.
+  - `plot_phase_diagrams.py`: plots three-seed means and standard-deviation bands, the primary 2D danger-zone diagram, the matched covariate-shift access-regime comparison, and supplementary plots.
 - `notebooks/`
   - `figures.ipynb`: notebook for interactive figure tweaking and additional exploratory plots.
 - `data/`
   - `cached/`: cached synthetic datasets (no real-world data are used).
 - `outputs/`
-  - `logs/` (recommended): raw sweep outputs (e.g., CSV/JSON with metric values).
+  - `logs/` (recommended): schema-v5 JSON outputs with means, standard deviations, and raw per-seed metric values.
   - `figures/` (recommended): generated plots and phase diagrams used in the report.
 - `paper/`
   - `project proposal.pdf`: original project proposal.
@@ -49,9 +49,8 @@ pip install -r requirements.txt
 python experiments/run_sweep.py --config configs/experiment_config.yaml
 ```
 
-3. generate results and plot figures( outputs/results/, outputs/figures/）
+3. generate figures from the newest log
 
 ```bash
 python experiments/plot_phase_diagrams.py
-
 ```

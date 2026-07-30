@@ -8,6 +8,11 @@ experiment:
   seed: 42
   description: "Sweep group-conditional base rates, covariates, and label noise to map DP/EO divergence."
 
+# --- One-Dimensional Diagnostic and Mitigation Sweeps ---
+one_dimensional_sweeps:
+  num_seeds: 3
+  seed_stride: 1000
+
 # --- Data Generation Parameters ---
 data:
   num_samples: 5000          

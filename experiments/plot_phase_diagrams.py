@@ -53,6 +53,49 @@ def _method_available(results, shift_types, method):
     )
 
 
+def _metric_std_for_method(shift_results, method, metric):
+    """Return schema-v5 seed variability, or None for older logs."""
+    values = (
+        shift_results.get('metric_std', {})
+        .get(method, {})
+        .get(metric)
+    )
+    if values is None:
+        return None
+    return np.asarray(values, dtype=float)
+
+
+def _plot_metric_curve(
+    ax,
+    severities,
+    shift_results,
+    method,
+    metric,
+    label,
+    **plot_kwargs,
+):
+    """Plot a mean curve and a population-SD band when available."""
+    method_results = _metrics_for_method(shift_results, method)
+    mean = np.asarray(method_results[metric], dtype=float)
+    line, = ax.plot(
+        severities,
+        mean,
+        label=label,
+        **plot_kwargs,
+    )
+    std = _metric_std_for_method(shift_results, method, metric)
+    if std is not None:
+        ax.fill_between(
+            severities,
+            np.clip(mean - std, 0.0, 1.0),
+            np.clip(mean + std, 0.0, 1.0),
+            color=line.get_color(),
+            alpha=0.12,
+            linewidth=0,
+        )
+    return line
+
+
 def find_latest_log(log_dir='outputs/logs'):
     """
     Find the most recent log file in the logs directory.
@@ -413,12 +456,12 @@ def plot_target_data_access_comparison(results, gammas, save_dir='outputs'):
     fig, axes = plt.subplots(2, 2, figsize=(15, 9))
     for ax, (metric, metric_label) in zip(axes.flat, metrics):
         for method, label in methods:
-            method_results = _metrics_for_method(
-                results[shift_type], method
-            )
-            ax.plot(
+            _plot_metric_curve(
+                ax,
                 gammas,
-                method_results[metric],
+                results[shift_type],
+                method,
+                metric,
                 marker='o',
                 label=label,
             )
@@ -473,22 +516,24 @@ def plot_mitigation_comparison(results, alphas, gammas, betas,
     fig, axes = plt.subplots(3, 3, figsize=(17, 12))
     for row, (shift_type, shift_label, severities) in enumerate(shifts):
         methods = {
-            'Baseline': _metrics_for_method(results[shift_type], 'baseline'),
-            'KDE reweighting': _metrics_for_method(
-                results[shift_type], 'kde_reweighting'
-            ),
-            'TPR threshold': _metrics_for_method(
-                results[shift_type], 'threshold_tpr'
-            ),
+            'Baseline': 'baseline',
+            'KDE reweighting': 'kde_reweighting',
+            'TPR threshold': 'threshold_tpr',
         }
         if include_target_retraining:
-            methods['Target retraining (diagnostic)'] = _metrics_for_method(
-                results[shift_type], 'target_retrained'
-            )
+            methods['Target retraining (diagnostic)'] = 'target_retrained'
         for col, (metric, metric_label) in enumerate(metrics):
             ax = axes[row, col]
-            for label, method_results in methods.items():
-                ax.plot(severities, method_results[metric], marker='o', label=label)
+            for label, method in methods.items():
+                _plot_metric_curve(
+                    ax,
+                    severities,
+                    results[shift_type],
+                    method,
+                    metric,
+                    label,
+                    marker='o',
+                )
             ax.set_title(f'{shift_label}: {metric_label}')
             ax.set_xlabel('Shift Severity')
             ax.set_ylabel(metric_label)
@@ -558,17 +603,26 @@ def plot_supplementary_retraining(results, alphas, gammas, betas,
     ]
     fig, axes = plt.subplots(3, 3, figsize=(17, 12))
     for row, (shift_type, shift_label, severities) in enumerate(shifts):
-        baseline = _metrics_for_method(results[shift_type], 'baseline')
-        retrained = _metrics_for_method(results[shift_type], 'target_retrained')
         for col, (metric, metric_label) in enumerate(metrics):
             ax = axes[row, col]
-            ax.plot(severities, baseline[metric], marker='o', label='Frozen source')
-            ax.plot(
+            _plot_metric_curve(
+                ax,
                 severities,
-                retrained[metric],
+                results[shift_type],
+                'baseline',
+                metric,
+                'Frozen source',
+                marker='o',
+            )
+            _plot_metric_curve(
+                ax,
+                severities,
+                results[shift_type],
+                'target_retrained',
+                metric,
+                'Target retrained',
                 marker='s',
                 linestyle='--',
-                label='Target retrained',
             )
             ax.set_title(f'{shift_label}: {metric_label}')
             ax.set_xlabel('Shift Severity')

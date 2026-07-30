@@ -260,6 +260,7 @@ def generate_joint_danger_zone_data(config, seed=42):
             key: values.std(axis=0)
             for key, values in metric_samples.items()
         },
+        'metric_samples': metric_samples,
         'danger_probability': danger_probability,
         'danger_mask': danger_probability >= consensus_fraction,
         'label_disagreement_probability': label_disagreement_probability,
@@ -282,6 +283,117 @@ def _empty_shift_results():
             'thresholds': [],
         }
     }
+
+
+def _one_dimensional_seed_values(config, seed):
+    repetition_config = config.get('one_dimensional_sweeps', {})
+    num_seeds = int(repetition_config.get('num_seeds', 1))
+    if num_seeds < 1:
+        raise ValueError(
+            'one_dimensional_sweeps.num_seeds must be at least 1'
+        )
+    seed_stride = int(repetition_config.get('seed_stride', 1000))
+    if seed_stride < 1:
+        raise ValueError(
+            'one_dimensional_sweeps.seed_stride must be at least 1'
+        )
+    return [seed + index * seed_stride for index in range(num_seeds)]
+
+
+def _aggregate_thresholds(threshold_samples):
+    """Aggregate per-seed, per-severity threshold dictionaries."""
+    num_severities = len(threshold_samples[0])
+    mean_thresholds = []
+    std_thresholds = []
+    for severity_index in range(num_severities):
+        groups = sorted({
+            group
+            for seed_thresholds in threshold_samples
+            for group in seed_thresholds[severity_index]
+        })
+        mean_thresholds.append({
+            group: float(np.mean([
+                seed_thresholds[severity_index][group]
+                for seed_thresholds in threshold_samples
+            ]))
+            for group in groups
+        })
+        std_thresholds.append({
+            group: float(np.std([
+                seed_thresholds[severity_index][group]
+                for seed_thresholds in threshold_samples
+            ]))
+            for group in groups
+        })
+    return mean_thresholds, std_thresholds
+
+
+def aggregate_one_dimensional_results(seed_results, seed_values):
+    """Aggregate coupled one-dimensional sweeps without losing raw samples."""
+    if not seed_results:
+        raise ValueError('seed_results must contain at least one repetition')
+    if len(seed_results) != len(seed_values):
+        raise ValueError('seed_results and seed_values must have equal length')
+
+    aggregated = {}
+    for shift_type in ('group_shift', 'covariate_shift', 'label_shift'):
+        shift_result = _empty_shift_results()
+        shift_result['metric_std'] = {
+            method: {} for method in METHOD_KEYS
+        }
+        shift_result['metric_samples'] = {
+            method: {} for method in METHOD_KEYS
+        }
+        for method in METHOD_KEYS:
+            for metric in METRIC_KEYS:
+                samples = np.asarray([
+                    repetition[shift_type][method][metric]
+                    for repetition in seed_results
+                ], dtype=float)
+                shift_result[method][metric] = samples.mean(axis=0).tolist()
+                shift_result['metric_std'][method][metric] = (
+                    samples.std(axis=0).tolist()
+                )
+                shift_result['metric_samples'][method][metric] = (
+                    samples.tolist()
+                )
+
+        diagnostic_samples = {}
+        diagnostic_std = {}
+        for diagnostic in (
+            'ess', 'ess_fraction', 'weight_min', 'weight_max'
+        ):
+            samples = np.asarray([
+                repetition[shift_type]['diagnostics'][diagnostic]
+                for repetition in seed_results
+            ], dtype=float)
+            shift_result['diagnostics'][diagnostic] = (
+                samples.mean(axis=0).tolist()
+            )
+            diagnostic_std[diagnostic] = samples.std(axis=0).tolist()
+            diagnostic_samples[diagnostic] = samples.tolist()
+
+        threshold_samples = [
+            repetition[shift_type]['diagnostics']['thresholds']
+            for repetition in seed_results
+        ]
+        threshold_mean, threshold_std = _aggregate_thresholds(
+            threshold_samples
+        )
+        shift_result['diagnostics']['thresholds'] = threshold_mean
+        diagnostic_std['thresholds'] = threshold_std
+        diagnostic_samples['thresholds'] = threshold_samples
+        shift_result['diagnostic_std'] = diagnostic_std
+        shift_result['diagnostic_samples'] = diagnostic_samples
+        aggregated[shift_type] = shift_result
+
+    aggregated['one_dimensional_metadata'] = {
+        'seeds': list(seed_values),
+        'num_seeds': len(seed_values),
+        'aggregation': 'mean_and_population_standard_deviation',
+        'coupled_across_severity': True,
+    }
+    return aggregated
 
 
 def _data_kwargs(data_config, num_samples):
@@ -465,98 +577,106 @@ def _evaluate_severity(
     )
 
 
-def generate_phase_diagram_data(config, seed=42):
-    """
-    Generate data for phase diagrams across three shift types.
-    
-    Parameters:
-    -----------
-    config : dict
-        Experiment configuration dictionary
-    seed : int, optional
-        Random seed for reproducibility
-    
-    Returns:
-    --------
-    dict, array, array, array
-        Phase diagram matrices for each metric/shift type, and severity arrays
-    """
-
+def _generate_one_dimensional_seed(
+    config, seed, alphas, gammas, betas
+):
+    """Run all one-dimensional shifts for one coupled repetition seed."""
     group_cfg = config['shifts']['group_shift']
     cov_cfg = config['shifts']['covariate_shift']
     label_cfg = config['shifts']['label_shift']
-    
-    alphas = np.linspace(group_cfg['severity_min'], group_cfg['severity_max'], 
-                         int(group_cfg['num_steps']))
-    gammas = np.linspace(cov_cfg['severity_min'], cov_cfg['severity_max'], 
-                         int(cov_cfg['num_steps']))
-    betas = np.linspace(label_cfg['severity_min'], label_cfg['severity_max'], 
-                        int(label_cfg['num_steps']))
-    
     data_cfg = config['data']
-    
-    # Base data for training (unshifted)
-    X_train, y_train, s_train = generate_data(
-        num_samples=data_cfg['num_samples'],
-        prior_a=data_cfg['prior_a'],
-        base_rate_a=data_cfg['base_rate_a'],
-        base_rate_b=data_cfg['base_rate_b'],
-        seed=seed
-    )
-    
-    target_group = cov_cfg.get('target_group', 'A')
-    print(f"Generating phase diagram data with target group for covariate shift: {target_group}")
-    
-    # Initialize results matrices
-    results = {
-        'group_shift': _empty_shift_results(),
-        'covariate_shift': _empty_shift_results(),
-        'label_shift': _empty_shift_results(),
-    }
     model_cfg = config.get('model', {})
     reweighting_cfg = config.get('reweighting', {})
     threshold_cfg = config.get('threshold_adjustment', {})
     supplementary_cfg = config.get('supplementary', {})
     ece_bins = config.get('metrics', {}).get('ece_bins', 10)
-    
-    print("Generating phase diagram data...")
-    
-    # Group Shift
-    print("  Group shift...", end='', flush=True)
-    for severity in alphas:
-        _evaluate_severity(
-            results, 'group_shift', severity, group_cfg, data_cfg, model_cfg,
-            reweighting_cfg, threshold_cfg, supplementary_cfg,
-            X_train, y_train, seed, ece_bins
+
+    X_train, y_train, _ = generate_data(
+        num_samples=data_cfg['num_samples'],
+        num_features=data_cfg.get('num_features', 2),
+        prior_a=data_cfg.get('prior_a', 0.5),
+        base_rate_a=data_cfg.get('base_rate_a', 0.3),
+        base_rate_b=data_cfg.get('base_rate_b', 0.3),
+        seed=seed,
+    )
+    results = {
+        'group_shift': _empty_shift_results(),
+        'covariate_shift': _empty_shift_results(),
+        'label_shift': _empty_shift_results(),
+    }
+    sweeps = (
+        ('group_shift', alphas, group_cfg),
+        ('covariate_shift', gammas, cov_cfg),
+        ('label_shift', betas, label_cfg),
+    )
+    for shift_type, severities, shift_config in sweeps:
+        print(f"    {shift_type}...", end='', flush=True)
+        for severity in severities:
+            _evaluate_severity(
+                results,
+                shift_type,
+                severity,
+                shift_config,
+                data_cfg,
+                model_cfg,
+                reweighting_cfg,
+                threshold_cfg,
+                supplementary_cfg,
+                X_train,
+                y_train,
+                seed,
+                ece_bins,
+            )
+        print(" done")
+    return results
+
+
+def generate_phase_diagram_data(config, seed=42):
+    """Generate aggregated 1D sweeps and the joint danger-zone grid."""
+    group_cfg = config['shifts']['group_shift']
+    cov_cfg = config['shifts']['covariate_shift']
+    label_cfg = config['shifts']['label_shift']
+    alphas = np.linspace(
+        group_cfg['severity_min'],
+        group_cfg['severity_max'],
+        int(group_cfg['num_steps']),
+    )
+    gammas = np.linspace(
+        cov_cfg['severity_min'],
+        cov_cfg['severity_max'],
+        int(cov_cfg['num_steps']),
+    )
+    betas = np.linspace(
+        label_cfg['severity_min'],
+        label_cfg['severity_max'],
+        int(label_cfg['num_steps']),
+    )
+
+    seed_values = _one_dimensional_seed_values(config, seed)
+    target_group = cov_cfg.get('target_group', 'A')
+    print(
+        "Generating one-dimensional sweeps with target group "
+        f"{target_group} and seeds {seed_values}"
+    )
+    seed_results = []
+    for repetition_seed in seed_values:
+        print(f"  Seed {repetition_seed}:")
+        seed_results.append(
+            _generate_one_dimensional_seed(
+                config,
+                repetition_seed,
+                alphas,
+                gammas,
+                betas,
+            )
         )
-    print(" done")
-    
-    # Covariate Shift
-    print("  Covariate shift...", end='', flush=True)
-    for severity in gammas:
-        _evaluate_severity(
-            results, 'covariate_shift', severity, cov_cfg, data_cfg, model_cfg,
-            reweighting_cfg, threshold_cfg, supplementary_cfg,
-            X_train, y_train, seed, ece_bins
-        )
-    print(" done")
-    
-    # Label Shift
-    print("  Label shift...", end='', flush=True)
-    for severity in betas:
-        _evaluate_severity(
-            results, 'label_shift', severity, label_cfg, data_cfg, model_cfg,
-            reweighting_cfg, threshold_cfg, supplementary_cfg,
-            X_train, y_train, seed, ece_bins
-        )
-    print(" done")
+    results = aggregate_one_dimensional_results(seed_results, seed_values)
 
     print("  Joint prior/label-noise danger zone...", end='', flush=True)
     results['joint_prior_label_shift'] = generate_joint_danger_zone_data(
         config, seed=seed
     )
     print(" done")
-    
     return results, alphas, gammas, betas
 
 
@@ -593,7 +713,7 @@ def save_results(results, alphas, gammas, betas, log_dir='outputs/logs'):
     
     # Prepare data for JSON serialization
     output_data = {
-        'schema_version': 4,
+        'schema_version': 5,
         'timestamp': timestamp,
         'alphas': alphas.tolist() if isinstance(alphas, np.ndarray) else list(alphas),
         'gammas': gammas.tolist() if isinstance(gammas, np.ndarray) else list(gammas),
@@ -629,7 +749,14 @@ def run_sweep(config, seed=42):
     print("\n" + "="*60)
     print("RESULTS SUMMARY")
     print("="*60 + "\n")
-    
+
+    one_dimensional = results['one_dimensional_metadata']
+    print(
+        "ONE-DIMENSIONAL REPETITIONS:\n"
+        f"  seeds: {one_dimensional['seeds']}\n"
+        "  displayed values: mean; uncertainty: population SD\n"
+    )
+
     for shift_type in ('group_shift', 'covariate_shift', 'label_shift'):
         print(f"{shift_type.upper()}:")
         for method in METHOD_KEYS:

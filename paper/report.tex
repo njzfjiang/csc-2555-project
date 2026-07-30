@@ -23,17 +23,17 @@
 
 \section{Introduction}
 
-Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments—such as moving a medical follow-up risk score across hospitals—involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) under what conditions can demographic parity remain stable or appear favorable while error-based metrics degrade? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We address these questions via a synthetic simulation framework mimicking a cross-hospital deployment, which allows us to systematically sweep over shift types and magnitudes.
+Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments—such as moving a medical follow-up risk score across hospitals—involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) when demographic parity and error-based metrics disagree, does the discrepancy reflect degradation with respect to the clean synthetic outcome $Y^*$, or measurement distortion induced by the recorded outcome $\tilde{Y}$? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We address these questions via a synthetic simulation framework mimicking a cross-hospital deployment.
 
 \section{Related Work}
-Fairness under non-stationary environments has been studied in several recent works. Asiaee and Aryan (2026) examined invariance under group-conditional prior shifts, while Chen et al. (2022) studied fairness transferability under bounded shifts. Barrainkua et al. (2022) and Shao et al. (2024) provided comprehensive surveys on preserving fairness guarantees and supervised fairness under distribution shifts. However, existing work rarely dissects, under a unified medical deployment simulation, how a static demographic parity value can systematically mask the degradation of error-based metrics—the central gap our study addresses.
+Fairness under non-stationary environments has been studied in several recent works. Asiaee and Aryan (2026) examined invariance under group-conditional prior shifts, while Chen et al. (2022) studied fairness transferability under bounded shifts. Barrainkua et al. (2022) and Shao et al. (2024) surveyed fairness under distribution shifts. Existing work rarely separates clean-outcome degradation from label-measurement distortion when selection-rate and error-based metrics disagree—the central gap addressed here.
 
 \section{Method}
 
 \subsection{Distribution shift mechanisms}
 \label{sec:shift_mechanisms}
 
-We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The diagnostic baseline holds the source classifier fixed; label-noise experiments retain both the clean synthetic outcome $Y^*$ and recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
+We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The fixed source classifier is logistic regression on $X=(X_1,X_2)$ without group $S$; $X_1$ is informative and $X_2$ is noise. Equal source base rates make this model correctly specified, and pure covariate shift preserves its label conditional. Label-noise experiments retain both $Y^*$ and the recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
 
 \subsection{Fairness and calibration metrics}
 \label{sec:metrics}
@@ -50,16 +50,18 @@ The interventions represent distinct target-data regimes rather than interchange
 \subsection{Shift parameter grid}
 \label{sec:setup}
 
-We use 11 values of $\alpha\in[0,1]$, 10 values of $\gamma\in[1,4]$, and 10 values of $\beta\in[0,0.3]$. The primary danger-zone analysis evaluates all $11\times10$ $(\alpha,\beta)$ combinations over five seeds; Appendix~\ref{app:d} reports implementation details.
+We use 11 values of $\alpha\in[0,1]$, 10 values of $\gamma\in[1,4]$, and 10 values of $\beta\in[0,0.3]$. One-dimensional results are means over three coupled seeds; the primary $11\times10$ $(\alpha,\beta)$ danger-zone grid uses five seeds. Appendix~\ref{app:d} reports implementation details.
 
 \section{Results}
 
 \subsection{Key empirical findings}
 \label{sec:results}
 
-\textbf{Diagnosis (RQ1--RQ2).} Under base-rate shift, DP rises from 0.01 to 0.26 while the TPR gap stays between 0.03 and 0.06. Under pure covariate shift, DP reaches 0.156 and EO/TPR gap reach 0.233, while ECE gap remains below 0.008. Under asymmetric label noise, DP stays at 0.012 while the recorded-label TPR gap rises from 0.032 to 0.176 even though predictions and clean outcomes do not change, exposing measurement distortion.
+\textbf{Clean-outcome degradation (RQ1--RQ2).} Averaged over three seeds, base-rate shift raises DP from 0.014 to 0.252 while the TPR gap remains between 0.027 and 0.043. Under pure covariate shift, DP reaches 0.139 and EO/TPR gap reach 0.219, while ECE gap remains below 0.009.
 
-\textbf{Mitigation (RQ3).} Under matched pure covariate shift, KDE nearly coincides with the correctly specified frozen model. Equal-opportunity thresholding lowers maximum TPR gap from 0.233 to 0.046 but raises maximum EO to 0.430 and lowers balanced accuracy at $\gamma=4$ from 0.894 to 0.841. Target ERM remains close to the frozen model (TPR gap 0.221 versus 0.233). Figure~\ref{fig:access_regimes} in Appendix~\ref{app:figs} compares these access regimes; KDE results under other shifts are negative controls.
+\textbf{Measurement distortion (RQ2).} Under asymmetric label noise, DP remains 0.014 and predictions and $Y^*$ do not change, yet the recorded-label TPR gap ends at 0.150 versus 0.034 without noise. The apparent degradation therefore arises from evaluating against $\tilde{Y}$ rather than a change in clean-outcome performance.
+
+\textbf{Mitigation (RQ3).} Under matched pure covariate shift, KDE nearly coincides with the correctly specified frozen model, as expected when reweighting preserves the same population optimum. Equal-opportunity thresholding lowers maximum TPR gap from 0.219 to 0.044 but raises maximum EO to 0.333; at $\gamma=4$, balanced accuracy falls from 0.893 to 0.863. Target ERM also remains close to the frozen model. Figure~\ref{fig:access_regimes} in Appendix~\ref{app:figs} shows three-seed variability; KDE under other shifts is a negative control.
 
 \subsection{Operational definition of the danger zone and phase-diagram analysis}
 
@@ -74,7 +76,7 @@ The operational \emph{metric-monitoring danger zone} is
 \quad\land\quad
 \left[\Delta_D\le0.02\ \lor\ \Delta_T\ge2\max(\Delta_D,0)\right].
 \]
-Thresholds are pre-specified; a cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively. Thus, DP can miss recorded-label disparity, while recorded outcomes can themselves misrepresent clean-outcome fairness.
+The cutoffs operationalize five-point TPR-gap harm, no greater than two-point DP worsening, or twofold relative deterioration; they are not clinical or significance standards (Appendix~\ref{app:d}). A cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively.
 
 \begin{figure}[!t]
     \centering
@@ -83,7 +85,7 @@ Thresholds are pre-specified; a cell is marked when at least three of five seeds
     \label{fig:danger_zone}
 \end{figure}
 
-\noindent\textbf{Interpretation.} The danger zone first appears at $\beta=0.167$ for $\alpha\le0.1$ and expands to $\alpha\le0.4$ as recording noise increases. In this band, DP remains close enough to baseline to look reassuring even though the recorded-label TPR gap has materially worsened. At larger $\alpha$, changes in DP make the directional rule harder to satisfy, but this does not imply agreement between outcome definitions: the clean--recorded TPR-gap discrepancy spans 78 cells, far beyond the 20-cell danger zone. The two panels therefore diagnose distinct monitoring failures---a seemingly stable selection-rate metric and an error-rate conclusion that depends on whether recorded or clean outcomes are treated as ground truth.
+\noindent\textbf{Interpretation.} The danger zone first appears at $\beta=0.167$ for $\alpha\le0.1$ and expands to $\alpha\le0.4$ as recording noise increases. Here DP does not materially worsen and may appear to improve, while the recorded-label TPR gap worsens. At larger $\alpha$, DP changes make the directional rule harder to satisfy, but the clean--recorded discrepancy still spans 78 cells, far beyond the 20-cell danger zone. The panels therefore distinguish a reassuring selection-rate metric from an error-rate conclusion that depends on the outcome definition.
 
 \section{Conclusion and Future Work}
 
@@ -117,6 +119,14 @@ in distribution shifts: A survey. arXiv preprint arXiv:2402.01327.
 \label{app:a}
 
 This appendix provides the complete mathematical definitions for the shift families summarized in Section~\ref{sec:shift_mechanisms}. Each is implemented using the base data generator \texttt{generate\_data} (\texttt{src/shifts.py}).
+
+\subsection{Source model and inputs}
+
+The classifier receives $X=(X_1,X_2)$ and does not receive the group label $S$. In the source distribution, $X_1\mid Y^*=y\sim\mathcal{N}(2y-1,1)$ is informative, whereas $X_2\sim\mathcal{N}(0,1)$ is independent noise. Both groups have $P(Y^*=1\mid S)=0.3$, so Bayes' rule gives
+\[
+\operatorname{logit}P(Y^*=1\mid X,S)=\operatorname{logit}(0.3)+2X_1.
+\]
+The fitted logistic regression includes an intercept and both features, so its conditional model family is correctly specified; the coefficient of $X_2$ is zero in the population. Group labels are used only for fairness evaluation and group-specific threshold post-processing. Because the pure covariate shift below changes $P(X,S)$ while preserving this conditional, density-ratio reweighting is matched to the shift assumption but need not improve the population classifier.
 
 \subsection{Group-conditioned base-rate shift}
 
@@ -230,9 +240,11 @@ This appendix provides the complete experimental implementation details compleme
 
 \begin{itemize}
     \item Sample size: source training, shifted evaluation, and target-retraining datasets each use \(N=5000\). KDE adaptation and threshold calibration each use independent samples of size 1000.
-    \item Classifier: Logistic regression with \texttt{max\_iter=1000} and default L2 regularization (\texttt{C=1.0}).
+    \item Classifier: Logistic regression on $X=(X_1,X_2)$ without $S$, with \texttt{max\_iter=1000} and default L2 regularization (\texttt{C=1.0}).
     \item Fairness and calibration metrics: fairness metrics are computed via \texttt{fairlearn.metrics}; ECE uses 10 equal-width bins.
-    \item Repetitions: the one-dimensional diagnostic and mitigation sweeps use seed 42. The primary $11\times10$ danger-zone grid uses five coupled seeds (42, 1042, 2042, 3042, and 4042); a cell is marked when at least three seeds satisfy the pre-specified rule. Diagnostics, thresholds, clean/recorded TPR gaps, and per-cell danger probabilities are logged for transparency.
+    \item Repetitions: the one-dimensional diagnostic and mitigation sweeps use three coupled seeds (42, 1042, and 2042); figures report their mean and population standard deviation. The primary $11\times10$ danger-zone grid uses five coupled seeds (42, 1042, 2042, 3042, and 4042); a cell is marked when at least three seeds satisfy the rule.
+    \item Danger-zone thresholds: 0.05 is a project-defined five-percentage-point materiality floor for TPR-gap worsening; 0.02 treats DP as not materially worse and includes apparent improvement; the factor two captures cases where both metrics worsen but TPR disparity grows disproportionately. These are transparent monitoring conventions rather than clinical or statistical standards. Per-seed metrics are retained so alternative thresholds can be evaluated without rerunning the models.
+    \item Logging: means, standard deviations, raw per-seed metric values, KDE diagnostics, fitted thresholds, clean/recorded TPR gaps, and per-cell danger probabilities are saved in the schema-v5 JSON log.
 \end{itemize}
 
 \section{Supplementary Results Figures}
@@ -243,14 +255,14 @@ This appendix provides supporting visualizations for the results summarized in S
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.98\textwidth]{figures/mitigation_access_regimes_covariate.png}
-    \caption{Mitigation comparison under pure covariate shift, organized by target-data access. KDE uses only unlabeled target covariates; equal-opportunity thresholding uses recorded target outcomes and group labels on a calibration set; target ERM uses labeled target training data. The methods are therefore access regimes rather than interchangeable fixes.}
+    \caption{Mitigation comparison under pure covariate shift, organized by target-data access. Lines are three-seed means and bands show population standard deviation. KDE uses unlabeled target covariates; equal-opportunity thresholding uses recorded target outcomes and group labels; target ERM uses labeled target training data. The methods are access regimes rather than interchangeable fixes.}
     \label{fig:access_regimes}
 \end{figure}
 
 \begin{figure}[p]
     \centering
     \includegraphics[width=1.0\textwidth]{figures/phase_diagrams.png}
-    \caption{Metrics versus severity for the three one-dimensional extensions. Group-conditioned base-rate shift raises DP while the TPR gap changes modestly. Pure group-specific covariate shift raises DP and error-based gaps while the ECE gap remains small. Under asymmetric label noise, DP remains flat while the TPR gap computed from recorded labels rises sharply.}
+    \caption{Three-seed mean metrics versus severity for the one-dimensional extensions. Base-rate shift raises DP while the clean-outcome TPR gap changes modestly. Pure covariate shift raises DP and error-based gaps while ECE gap remains small. Under asymmetric label noise, DP remains flat while the TPR gap computed from recorded labels rises.}
     \label{fig:phase_diagram}
 \end{figure}
 
@@ -259,7 +271,7 @@ This appendix provides supporting visualizations for the results summarized in S
 \begin{figure}[p]
     \centering
     \includegraphics[width=1.0\textwidth]{figures/mitigation_comparison.png}
-    \caption{Supplementary comparison across all shifts. KDE results outside pure covariate shift are negative controls rather than matched corrections. Threshold adjustment often reduces the TPR gap while increasing DP, FPR-driven EO, or both. Target retraining is a supervised reference, not a fairness-specific mitigation.}
+    \caption{Supplementary three-seed comparison across all shifts; bands show population standard deviation. KDE outside pure covariate shift is a negative control. Threshold adjustment often reduces the TPR gap while increasing DP, FPR-driven EO, or both. Target retraining is a supervised reference, not a fairness-specific mitigation.}
     \label{fig:mitigation}
 \end{figure}
 

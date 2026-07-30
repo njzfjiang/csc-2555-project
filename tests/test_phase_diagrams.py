@@ -2,6 +2,7 @@ import unittest
 
 from experiments.plot_phase_diagrams import (
     _available_phase_metrics,
+    _metric_std_for_method,
     _method_available,
 )
 
@@ -61,6 +62,23 @@ class PhaseDiagramMetricTests(unittest.TestCase):
                 results,
                 ('group_shift', 'covariate_shift', 'label_shift'),
                 'target_retrained',
+            )
+        )
+
+    def test_schema_v5_exposes_metric_standard_deviation(self):
+        shift_results = {
+            'baseline': {'dp': [0.1, 0.2]},
+            'metric_std': {'baseline': {'dp': [0.01, 0.02]}},
+        }
+        self.assertEqual(
+            _metric_std_for_method(
+                shift_results, 'baseline', 'dp'
+            ).tolist(),
+            [0.01, 0.02],
+        )
+        self.assertIsNone(
+            _metric_std_for_method(
+                {'baseline': {'dp': [0.1]}}, 'baseline', 'dp'
             )
         )
 
