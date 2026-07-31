@@ -23,7 +23,7 @@
 
 \section{Introduction}
 
-Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments—such as moving a medical follow-up risk score across hospitals—involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) when demographic parity and error-based metrics disagree, does the discrepancy reflect degradation with respect to the clean synthetic outcome $Y^*$, or measurement distortion induced by the recorded outcome $\tilde{Y}$? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We address these questions via a synthetic simulation framework mimicking a cross-hospital deployment.
+Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments—such as moving a medical follow-up risk score across hospitals—involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) when demographic parity and error-based metrics disagree, does the discrepancy reflect degradation with respect to the clean synthetic outcome $Y^*$, or measurement distortion induced by the recorded outcome $\tilde{Y}$? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We study these questions in a stylized two-hospital simulation.
 
 \section{Related Work}
 Fairness under non-stationary environments has been studied in several recent works. Asiaee and Aryan (2026) examined invariance under group-conditional prior shifts, while Chen et al. (2022) studied fairness transferability under bounded shifts. Barrainkua et al. (2022) and Shao et al. (2024) surveyed fairness under distribution shifts. We complement prior work by separating metric changes evaluated against clean outcomes from distortion induced by recorded-label noise when selection-rate and error-based metrics disagree.
@@ -33,7 +33,7 @@ Fairness under non-stationary environments has been studied in several recent wo
 \subsection{Distribution shift mechanisms}
 \label{sec:shift_mechanisms}
 
-We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The fixed source classifier is logistic regression on $X=(X_1,X_2)$ without group $S$; $X_1$ is informative and $X_2$ is noise. Under the Gaussian source generator and equal group base rates, this model is correctly specified, and pure covariate shift preserves its label conditional. Label-noise experiments retain both $Y^*$ and the recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
+We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The fixed source classifier is logistic regression on $X=(X_1,X_2)$ without group $S$; $X_1$ is informative and $X_2$ is noise. Under the Gaussian source generator and equal group base rates, this family is correctly specified; by construction, pure covariate shift preserves $P(Y\mid X,S)$. Label-noise experiments retain both $Y^*$ and the recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
 
 \subsection{Fairness and calibration metrics}
 \label{sec:metrics}
@@ -59,7 +59,7 @@ We use 11 values of $\alpha\in[0,1]$, 10 values of $\gamma\in[1,4]$, and 10 valu
 
 \textbf{Metric behavior without label noise (RQ1--RQ2).} Averaged over three seeds, base-rate shift raises DP from 0.014 to 0.252 while the TPR gap remains between 0.027 and 0.043. Under pure covariate shift, DP reaches 0.139 and EO/TPR gap reach 0.219, while ECE gap remains below 0.009.
 
-\textbf{Measurement distortion (RQ2).} Under asymmetric label noise, DP remains 0.014 and predictions and $Y^*$ do not change, yet the recorded-label TPR gap ends at 0.150 versus 0.034 without noise. The apparent degradation therefore arises from evaluating against $\tilde{Y}$ rather than a change in clean-outcome performance.
+\textbf{Measurement distortion (RQ2).} Under asymmetric label noise, DP remains 0.014 and predictions and $Y^*$ do not change, yet the recorded-label TPR gap ends at 0.150 versus 0.034 without noise. The apparent degradation therefore arises entirely from evaluating against $\tilde{Y}$ rather than a change in clean-outcome performance.
 
 \textbf{Mitigation (RQ3).} Under matched pure covariate shift, KDE nearly coincides with the correctly specified frozen model, as expected when reweighting preserves the same population optimum. Equal-opportunity thresholding lowers maximum TPR gap from 0.219 to 0.044 but raises maximum EO to 0.333; at $\gamma=4$, balanced accuracy falls from 0.893 to 0.863. Target ERM also remains close to the frozen model. Figure~\ref{fig:access_regimes} in Appendix~\ref{app:figs} shows three-seed variability; KDE under other shifts is a negative control.
 
@@ -76,7 +76,7 @@ The operational \emph{metric-monitoring danger zone} is
 \quad\land\quad
 \left[\Delta_D\le0.02\ \lor\ \Delta_T\ge2\max(\Delta_D,0)\right].
 \]
-The rule requires a TPR-gap increase of at least five percentage points and either no more than a two-point DP increase or a TPR-gap increase at least twice the nonnegative DP increase; these are operational, not clinical or statistical-significance, thresholds (Appendix~\ref{app:d}). A cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively. One-at-a-time sensitivity checks retain nonempty danger zones (12--31 cells), with the footprint most sensitive to the cross-metric multiplier (Table~\ref{tab:danger_sensitivity}).
+The rule requires a TPR-gap increase of at least five percentage points and either no more than a two-point DP increase or a TPR-gap increase at least twice the nonnegative DP increase. These are monitoring cutoffs, not clinical standards or statistical-significance tests (Appendix~\ref{app:d}). A cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively. One-at-a-time sensitivity checks retain nonempty danger zones (12--31 cells), with the footprint most sensitive to the cross-metric multiplier (Table~\ref{tab:danger_sensitivity}).
 
 \begin{figure}[!t]
     \centering
@@ -85,11 +85,11 @@ The rule requires a TPR-gap increase of at least five percentage points and eith
     \label{fig:danger_zone}
 \end{figure}
 
-\noindent\textbf{Interpretation.} The danger zone first appears at $\beta=0.167$ for $\alpha\le0.1$ and expands to $\alpha\le0.4$ as recording noise increases. Here DP does not materially worsen and may appear to improve, while the recorded-label TPR gap worsens. At larger $\alpha$, DP changes make the directional rule harder to satisfy, but the clean--recorded discrepancy still spans 78 cells, far beyond the 20-cell danger zone. The panels therefore distinguish a reassuring selection-rate metric from an error-rate conclusion that depends on the outcome definition.
+\noindent\textbf{Interpretation.} The danger zone begins at $\beta=0.167$ for $\alpha\le0.1$ and expands to $\alpha\le0.4$. DP can appear stable or improve while recorded-label TPR disparity worsens; 78 cells show clean--recorded disagreement beyond the 20-cell zone. Thus, conclusions depend on both metric and outcome definition.
 
 \section{Conclusion and Future Work}
 
-Stable DP can mask recorded-label error disparities, yet treating recorded outcomes as ground truth can also mistake documentation distortion for disparity in the clean synthetic proxy for follow-up need. Deployment monitoring should therefore track DP, TPR gaps, calibration, and data quality with each metric tied to its outcome definition. Mitigations must likewise be interpreted by their target-data requirements and valid shift assumptions, not as interchangeable fixes. Future work should extend the danger-zone analysis to richer feature spaces and causal outcome definitions.
+Stable DP can mask recorded-label disparities, while documentation noise can create apparent disparity. Monitoring should tie metrics and data quality to explicit outcomes and respect each mitigation's access and shift assumptions. Future work should study richer features and causal outcome definitions.
 
 \clearpage
 \begin{thebibliography}{99}
@@ -158,7 +158,7 @@ with $\gamma\in[1,4]$. We then sample the target label from the same conditional
 
 \subsection{Group-specific label noise shift}
 
-Finally, the function \texttt{label\_shift(severity)} modifies recorded labels asymmetrically across groups. Here, \texttt{severity} (chosen in \([0, 0.3]\)) controls the probability with which clean positive labels for group A and, at half that rate, clean negative labels for group B are flipped. Concretely, we call
+Finally, \texttt{label\_shift} modifies recorded labels asymmetrically across groups. Its \texttt{severity} argument, chosen in \([0, 0.3]\), controls the probability with which clean positive labels for group A and, at half that rate, clean negative labels for group B are flipped. Concretely, we call
 \begin{itemize}
     \item \texttt{generate\_data(flip\_noise\_a=severity)},
 \end{itemize}
