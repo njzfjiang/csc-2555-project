@@ -26,14 +26,14 @@
 Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments—such as moving a medical follow-up risk score across hospitals—involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) when demographic parity and error-based metrics disagree, does the discrepancy reflect degradation with respect to the clean synthetic outcome $Y^*$, or measurement distortion induced by the recorded outcome $\tilde{Y}$? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We address these questions via a synthetic simulation framework mimicking a cross-hospital deployment.
 
 \section{Related Work}
-Fairness under non-stationary environments has been studied in several recent works. Asiaee and Aryan (2026) examined invariance under group-conditional prior shifts, while Chen et al. (2022) studied fairness transferability under bounded shifts. Barrainkua et al. (2022) and Shao et al. (2024) surveyed fairness under distribution shifts. Existing work rarely separates clean-outcome degradation from label-measurement distortion when selection-rate and error-based metrics disagree—the central gap addressed here.
+Fairness under non-stationary environments has been studied in several recent works. Asiaee and Aryan (2026) examined invariance under group-conditional prior shifts, while Chen et al. (2022) studied fairness transferability under bounded shifts. Barrainkua et al. (2022) and Shao et al. (2024) surveyed fairness under distribution shifts. We complement prior work by separating metric changes evaluated against clean outcomes from distortion induced by recorded-label noise when selection-rate and error-based metrics disagree.
 
 \section{Method}
 
 \subsection{Distribution shift mechanisms}
 \label{sec:shift_mechanisms}
 
-We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The fixed source classifier is logistic regression on $X=(X_1,X_2)$ without group $S$; $X_1$ is informative and $X_2$ is noise. Equal source base rates make this model correctly specified, and pure covariate shift preserves its label conditional. Label-noise experiments retain both $Y^*$ and the recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
+We study group-conditioned base-rate shift, pure group-specific covariate shift, and asymmetric label noise. The fixed source classifier is logistic regression on $X=(X_1,X_2)$ without group $S$; $X_1$ is informative and $X_2$ is noise. Under the Gaussian source generator and equal group base rates, this model is correctly specified, and pure covariate shift preserves its label conditional. Label-noise experiments retain both $Y^*$ and the recorded outcome $\tilde{Y}$. Full constructions are given in Appendix~\ref{app:a}.
 
 \subsection{Fairness and calibration metrics}
 \label{sec:metrics}
@@ -57,7 +57,7 @@ We use 11 values of $\alpha\in[0,1]$, 10 values of $\gamma\in[1,4]$, and 10 valu
 \subsection{Key empirical findings}
 \label{sec:results}
 
-\textbf{Clean-outcome degradation (RQ1--RQ2).} Averaged over three seeds, base-rate shift raises DP from 0.014 to 0.252 while the TPR gap remains between 0.027 and 0.043. Under pure covariate shift, DP reaches 0.139 and EO/TPR gap reach 0.219, while ECE gap remains below 0.009.
+\textbf{Metric behavior without label noise (RQ1--RQ2).} Averaged over three seeds, base-rate shift raises DP from 0.014 to 0.252 while the TPR gap remains between 0.027 and 0.043. Under pure covariate shift, DP reaches 0.139 and EO/TPR gap reach 0.219, while ECE gap remains below 0.009.
 
 \textbf{Measurement distortion (RQ2).} Under asymmetric label noise, DP remains 0.014 and predictions and $Y^*$ do not change, yet the recorded-label TPR gap ends at 0.150 versus 0.034 without noise. The apparent degradation therefore arises from evaluating against $\tilde{Y}$ rather than a change in clean-outcome performance.
 
@@ -76,7 +76,7 @@ The operational \emph{metric-monitoring danger zone} is
 \quad\land\quad
 \left[\Delta_D\le0.02\ \lor\ \Delta_T\ge2\max(\Delta_D,0)\right].
 \]
-The cutoffs operationalize five-point TPR-gap harm, no greater than two-point DP worsening, or twofold relative deterioration; they are not clinical or significance standards (Appendix~\ref{app:d}). A cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively.
+The rule requires a TPR-gap increase of at least five percentage points and either no more than a two-point DP increase or a TPR-gap increase at least twice the nonnegative DP increase; these are operational, not clinical or statistical-significance, thresholds (Appendix~\ref{app:d}). A cell is marked when at least three of five seeds satisfy the rule. Figure~\ref{fig:danger_zone} shows 20 dangerous cells out of 110, emerging from $\beta\approx0.17$ at lower $\alpha$. Recorded and clean TPR gaps differ by at least five percentage points in 78 cells; their maximum increases are 0.338 and 0.021, respectively. One-at-a-time sensitivity checks retain nonempty danger zones (12--31 cells), with the footprint most sensitive to the cross-metric multiplier (Table~\ref{tab:danger_sensitivity}).
 
 \begin{figure}[!t]
     \centering
@@ -89,7 +89,7 @@ The cutoffs operationalize five-point TPR-gap harm, no greater than two-point DP
 
 \section{Conclusion and Future Work}
 
-Stable DP can mask recorded-label error disparities, yet treating recorded outcomes as ground truth can also mistake documentation distortion for latent clinical harm. Deployment monitoring should therefore track DP, TPR gaps, calibration, and data quality with each metric tied to its outcome definition. Mitigations must likewise be interpreted by their target-data requirements and valid shift assumptions, not as interchangeable fixes. Future work should extend the danger-zone analysis to richer feature spaces and causal outcome definitions.
+Stable DP can mask recorded-label error disparities, yet treating recorded outcomes as ground truth can also mistake documentation distortion for disparity in the clean synthetic proxy for follow-up need. Deployment monitoring should therefore track DP, TPR gaps, calibration, and data quality with each metric tied to its outcome definition. Mitigations must likewise be interpreted by their target-data requirements and valid shift assumptions, not as interchangeable fixes. Future work should extend the danger-zone analysis to richer feature spaces and causal outcome definitions.
 
 \clearpage
 \begin{thebibliography}{99}
@@ -197,7 +197,7 @@ We focus on three standard group fairness quantities implemented via
     
     We compute this quantity using \texttt{fairlearn.metrics.equalized\_odds\_difference}. In our setting specifically, large EO difference means that either missed follow-up (TPR gap) or unnecessary referrals (FPR gap) are distributed unevenly between groups.
 
-    \item \textbf{True-positive-rate gap (TPR gap).} We separately report \(\lvert \mathrm{TPR}_0-\mathrm{TPR}_1\rvert\), the equal-opportunity violation. This is necessary for interpreting the threshold-adjustment experiment: a smaller TPR gap can coincide with a larger EO difference if the false-positive-rate gap grows. In the one-dimensional label-noise sweep this metric uses recorded outcomes $\tilde{Y}$ and therefore measures disparity relative to the recorded proxy, not latent clinical truth. The joint experiment additionally reports the same quantity using clean synthetic outcomes $Y^*$.
+    \item \textbf{True-positive-rate gap (TPR gap).} We separately report \(\lvert \mathrm{TPR}_0-\mathrm{TPR}_1\rvert\), the equal-opportunity violation. This is necessary for interpreting the threshold-adjustment experiment: a smaller TPR gap can coincide with a larger EO difference if the false-positive-rate gap grows. In the one-dimensional label-noise sweep this metric uses recorded outcomes $\tilde{Y}$ and therefore measures disparity relative to the recorded proxy, not the clean synthetic outcome. The joint experiment additionally reports the same quantity using clean synthetic outcomes $Y^*$.
 \end{itemize}
 
 In addition to group fairness, we track probability calibration at both the global and group levels. We compute the expected calibration error (ECE) following a standard binned estimator. Given predicted probabilities \(p_i\) and labels \(y_i\), we partition the interval \([0,1]\) into \(B\) bins, and for each bin \(b\) compute the average predicted confidence and empirical accuracy. The ECE is then
@@ -242,10 +242,31 @@ This appendix provides the complete experimental implementation details compleme
     \item Sample size: source training, shifted evaluation, and target-retraining datasets each use \(N=5000\). KDE adaptation and threshold calibration each use independent samples of size 1000.
     \item Classifier: Logistic regression on $X=(X_1,X_2)$ without $S$, with \texttt{max\_iter=1000} and default L2 regularization (\texttt{C=1.0}).
     \item Fairness and calibration metrics: fairness metrics are computed via \texttt{fairlearn.metrics}; ECE uses 10 equal-width bins.
-    \item Repetitions: the one-dimensional diagnostic and mitigation sweeps use three coupled seeds (42, 1042, and 2042); figures report their mean and population standard deviation. The primary $11\times10$ danger-zone grid uses five coupled seeds (42, 1042, 2042, 3042, and 4042); a cell is marked when at least three seeds satisfy the rule.
+    \item Repetitions: the one-dimensional diagnostic and mitigation sweeps use three coupled seeds (42, 1042, and 2042); figures report their mean and standard deviation across three seeds. The primary $11\times10$ danger-zone grid uses five coupled seeds (42, 1042, 2042, 3042, and 4042); a cell is marked when at least three seeds satisfy the rule.
     \item Danger-zone thresholds: 0.05 is a project-defined five-percentage-point materiality floor for TPR-gap worsening; 0.02 treats DP as not materially worse and includes apparent improvement; the factor two captures cases where both metrics worsen but TPR disparity grows disproportionately. These are transparent monitoring conventions rather than clinical or statistical standards. Per-seed metrics are retained so alternative thresholds can be evaluated without rerunning the models.
     \item Logging: means, standard deviations, raw per-seed metric values, KDE diagnostics, fitted thresholds, clean/recorded TPR gaps, and per-cell danger probabilities are saved in the schema-v5 JSON log.
 \end{itemize}
+
+\subsection{Danger-zone threshold sensitivity}
+
+Table~\ref{tab:danger_sensitivity} varies one component of the operational rule at a time while holding the other components at their primary values: minimum TPR-gap increase 0.05, maximum DP increase 0.02, cross-metric multiplier 2.0, and consensus in at least three of five seeds. The check changes only the classification rule applied to saved per-seed metrics; no models are refitted.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \begin{tabular}{lcc}
+        \hline
+        Component varied & Value(s) & Dangerous cells (of 110) \\
+        \hline
+        Primary rule & $(0.05,\ 0.02,\ 2.0)$ & 20 \\
+        Minimum TPR-gap increase & $0.03\;/\;0.07$ & $23\;/\;17$ \\
+        Maximum DP increase & $0.01\;/\;0.03$ & $20\;/\;20$ \\
+        Cross-metric multiplier & $1.5\;/\;3.0$ & $31\;/\;12$ \\
+        \hline
+    \end{tabular}
+    \caption{One-at-a-time sensitivity of the danger-zone cell count. The existence of a nonempty danger zone is stable across the alternatives, while its size is most sensitive to the cross-metric multiplier.}
+    \label{tab:danger_sensitivity}
+\end{table}
 
 \section{Supplementary Results Figures}
 \label{app:figs}
@@ -255,7 +276,7 @@ This appendix provides supporting visualizations for the results summarized in S
 \begin{figure}[!htbp]
     \centering
     \includegraphics[width=0.98\textwidth]{figures/mitigation_access_regimes_covariate.png}
-    \caption{Mitigation comparison under pure covariate shift, organized by target-data access. Lines are three-seed means and bands show population standard deviation. KDE uses unlabeled target covariates; equal-opportunity thresholding uses recorded target outcomes and group labels; target ERM uses labeled target training data. The methods are access regimes rather than interchangeable fixes.}
+    \caption{Mitigation comparison under pure covariate shift, organized by target-data access. Lines are three-seed means and bands show $\pm 1$ standard deviation across the three seeds. KDE uses unlabeled target covariates; equal-opportunity thresholding uses recorded target outcomes and group labels; target ERM uses labeled target training data. The methods are access regimes rather than interchangeable fixes.}
     \label{fig:access_regimes}
 \end{figure}
 
@@ -271,7 +292,7 @@ This appendix provides supporting visualizations for the results summarized in S
 \begin{figure}[p]
     \centering
     \includegraphics[width=1.0\textwidth]{figures/mitigation_comparison.png}
-    \caption{Supplementary three-seed comparison across all shifts; bands show population standard deviation. KDE outside pure covariate shift is a negative control. Threshold adjustment often reduces the TPR gap while increasing DP, FPR-driven EO, or both. Target retraining is a supervised reference, not a fairness-specific mitigation.}
+    \caption{Supplementary three-seed comparison across all shifts; bands show $\pm 1$ standard deviation across the three seeds. KDE outside pure covariate shift is a negative control. Threshold adjustment often reduces the TPR gap while increasing DP, FPR-driven EO, or both. Target retraining is a supervised reference, not a fairness-specific mitigation.}
     \label{fig:mitigation}
 \end{figure}
 
