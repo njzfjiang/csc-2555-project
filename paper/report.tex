@@ -12,6 +12,7 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 
+\hypersetup{hidelinks}
 \begin{document}
 
 % === 标题、作者 ===
@@ -23,10 +24,10 @@
 
 \section{Introduction}
 
-Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments—such as moving a medical follow-up risk score across hospitals—involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) when demographic parity and error-based metrics disagree, does the discrepancy reflect degradation with respect to the clean synthetic outcome $Y^*$, or measurement distortion induced by the recorded outcome $\tilde{Y}$? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We study these questions in a stylized two-hospital simulation.
+Group fairness metrics are typically defined under a fixed data-generating process, yet real-world deployments---such as moving a medical follow-up risk score across hospitals---involve distribution shifts that can make these metrics behave unpredictably. In this project, we ask: (1) how do standard group fairness metrics behave under controlled shifts even when the underlying classifier remains fixed? (2) when demographic parity and error-based metrics disagree, does the discrepancy reflect degradation with respect to the clean synthetic outcome $Y^*$, or measurement distortion induced by the recorded outcome $\tilde{Y}$? and (3) how do importance reweighting, post-hoc threshold adjustment, and target-distribution retraining affect fairness distortion and what trade-offs do they incur? We study these questions in a stylized two-hospital simulation.
 
 \section{Related Work}
-Fairness under non-stationary environments has been studied in several recent works. Asiaee and Aryan (2026) examined invariance under group-conditional prior shifts, while Chen et al. (2022) studied fairness transferability under bounded shifts. Barrainkua et al. (2022) and Shao et al. (2024) surveyed fairness under distribution shifts. We complement prior work by separating metric changes evaluated against clean outcomes from distortion induced by recorded-label noise when selection-rate and error-based metrics disagree.
+Prior work studies invariance under group-conditional prior shifts~\cite{asiaee2026fairness}, fairness transferability under bounded shifts~\cite{chen2022fairness}, and broader fairness guarantees under distribution shift~\cite{barrainkua2022survey,shao2024supervised}. Liao and Naghizadeh~\cite{liao2022social} study fairness criteria under errors in labels and feature measurements. We instead distinguish clean-outcome metric changes from distortion caused by evaluating a fixed deployed model against noisy recorded labels.
 
 \section{Method}
 
@@ -109,6 +110,10 @@ fairness guarantees in changing environments. arXiv preprint arXiv:2211.07530.
 \bibitem{shao2024supervised}
 Shao, M., Li, D., Zhao, C., Wu, X., Lin, Y., \& Tian, Q. (2024). Supervised algorithmic fairness
 in distribution shifts: A survey. arXiv preprint arXiv:2402.01327.
+
+\bibitem{liao2022social}
+Liao, Y., \& Naghizadeh, P. (2022). Social bias meets data bias: The impacts of labeling and
+measurement errors on fairness criteria. arXiv preprint arXiv:2206.00137.
 
 \end{thebibliography}
 
@@ -262,6 +267,7 @@ Table~\ref{tab:danger_sensitivity} varies one component of the operational rule 
         Minimum TPR-gap increase & $0.03\;/\;0.07$ & $23\;/\;17$ \\
         Maximum DP increase & $0.01\;/\;0.03$ & $20\;/\;20$ \\
         Cross-metric multiplier & $1.5\;/\;3.0$ & $31\;/\;12$ \\
+        Seed consensus & $2/5\;/\;4/5$ & $27\;/\;14$ \\
         \hline
     \end{tabular}
     \caption{One-at-a-time sensitivity of the danger-zone cell count. The existence of a nonempty danger zone is stable across the alternatives, while its size is most sensitive to the cross-metric multiplier.}
